@@ -1,0 +1,46 @@
+# Outlook → Obsidian Bridge - 設定テンプレート
+# このファイルを config.yaml にコピーして編集してください:
+#   cp config.example.yaml config.yaml
+
+# Obsidian Vault のルート絶対パス（macOS。~ 展開に対応）
+vault_path: "~/Obsidian/WorkVault"
+
+# Vault 内での出力先サブディレクトリ
+output_subdir: "Emails"
+
+# Outlook アカウント（未指定 or 空配列なら全アカウント）
+accounts: []
+# accounts:
+#   - "yoshi@unitedpetroleum.com.au"
+
+# 同期対象フォルダ
+folders:
+  inbox: true               # 受信トレイ
+  sent: true                # 送信済みアイテム
+  include_subfolders: true  # サブフォルダも再帰的に処理
+
+# 除外フォルダ（フォルダ名の部分一致）
+excluded_folders:
+  - "Junk"
+  - "Deleted Items"
+  - "RSS Subscriptions"
+
+# 出力オプション
+output:
+  generate_threads: true          # スレッドノートを生成
+  filename_max_length: 80         # ファイル名最大長
+  # false（既定）: 署名（"-- " 以降）を <details> に折り畳む
+  # true        : 署名を本文中にそのまま残す
+  preserve_html_signatures: false
+
+# 差分同期
+sync:
+  initial_full_import: true       # 初回は全件取り込み
+  lookback_buffer_minutes: 60     # 差分同期時のバッファ（時計ズレ対策）
+
+# ロギング（ファイルは level、コンソールは WARNING 以上）
+logging:
+  level: INFO                     # DEBUG / INFO / WARNING / ERROR
+  file: "logs/sync.log"
+  max_size_mb: 10
+  backup_count: 5

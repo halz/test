@@ -1,0 +1,530 @@
+"""Outlook for Mac access layer (AppleScript) plus a mock for tests/dry-runs.
+
+Why AppleScript instead of COM
+------------------------------
+The original spec targeted Windows + Outlook desktop via COM (``pywin32``).
+On macOS there is no COM; the supported automation surface is AppleScript /
+Apple Events. This module therefore drives Outlook for Mac with ``osascript``.
+
+Known Mac-vs-Windows differences (see README "Deviations"):
+* ``EntryID``      → message ``id`` (stable within a profile/database).
+* ``ConversationID`` is **not** exposed by Outlook for Mac AppleScript, so it is
+  derived from the normalised subject (RE:/FW: stripped). Threading therefore
+  groups by topic rather than by Exchange conversation.
+* Message ``Size`` and flag "completed" state are not exposed → recorded as 0 /
+  collapsed to flagged|none.
+
+The AppleScript generation here is the single most version-sensitive part of the
+project. The Python pipeline downstream is fully decoupled and unit-tested via
+:class:`MockOutlookClient`, and the wire-format parser is tested directly.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import logging
+import re
+import subprocess
+from abc import ABC, abstractmethod
+from collections.abc import Iterator
+from dataclasses import dataclass, field
+from datetime import datetime
+
+from .config import Config
+
+logger = logging.getLogger(__name__)
+
+# Control characters used as field/record separators in the AppleScript output.
+RS = "\x1e"  # record separator (between messages)
+US = "\x1f"  # unit separator (between fields)
+LIST_SEP = ";;"
+PAIR_SEP = "|"
+
+# Number of fields emitted per message (body is last and may contain stray US).
+_FIELD_COUNT = 15
+
+_SUBJECT_PREFIX = re.compile(r"^\s*(re|fw|fwd|aw|wg|sv|antwort)\s*:\s*", re.IGNORECASE)
+
+
+@dataclass
+class Recipient:
+    name: str
+    email: str
+
+    def display(self) -> str:
+        if self.name and self.email:
+            return f"{self.name} <{self.email}>"
+        return self.email or self.name
+
+
+@dataclass
+class Attachment:
+    name: str
+    size_bytes: int = 0
+    extension: str = ""
+
+
+@dataclass
+class MessageRecord:
+    entry_id: str
+    subject: str
+    direction: str  # received | sent
+    sender_name: str
+    sender_email: str
+    date: datetime
+    to: list[Recipient] = field(default_factory=list)
+    cc: list[Recipient] = field(default_factory=list)
+    categories: list[str] = field(default_factory=list)
+    flag: str = "none"  # none | flagged
+    importance: str = "normal"  # low | normal | high
+    unread: bool = False
+    size_bytes: int = 0
+    body_html: str | None = None
+    body_plain: str = ""
+    attachments: list[Attachment] = field(default_factory=list)
+    folder_path: str = ""
+    conversation_id: str = ""
+    conversation_topic: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.conversation_topic:
+            self.conversation_topic = clean_topic(self.subject)
+        if not self.conversation_id:
+            self.conversation_id = derive_conversation_id(self.subject)
+
+    def from_display(self) -> str:
+        return Recipient(self.sender_name, self.sender_email).display()
+
+
+def clean_topic(subject: str) -> str:
+    """Strip RE:/FW: style prefixes to get the conversation topic."""
+    topic = subject or ""
+    while True:
+        stripped = _SUBJECT_PREFIX.sub("", topic)
+        if stripped == topic:
+            break
+        topic = stripped
+    return topic.strip()
+
+
+def derive_conversation_id(subject: str) -> str:
+    """Derive a stable conversation id from the normalised subject.
+
+    Outlook for Mac does not expose the Exchange ConversationID, so messages are
+    grouped by topic. Empty/blank subjects hash to a shared bucket.
+    """
+    topic = clean_topic(subject).lower()
+    return hashlib.sha256(topic.encode("utf-8")).hexdigest()
+
+
+class OutlookClientBase(ABC):
+    """Interface implemented by the real and mock clients."""
+
+    @abstractmethod
+    def is_available(self) -> bool:
+        """Return True if the backend can be reached."""
+
+    @abstractmethod
+    def iter_messages(self, since: datetime | None = None) -> Iterator[MessageRecord]:
+        """Yield messages, optionally only those on/after ``since``."""
+
+
+class MockOutlookClient(OutlookClientBase):
+    """In-memory client used for tests and ``--mock`` dry-runs."""
+
+    def __init__(self, records: list[MessageRecord]):
+        self._records = records
+
+    def is_available(self) -> bool:
+        return True
+
+    def iter_messages(self, since: datetime | None = None) -> Iterator[MessageRecord]:
+        for record in self._records:
+            if since is not None and record.date < since:
+                continue
+            yield record
+
+
+class AppleScriptOutlookClient(OutlookClientBase):
+    """Drives Outlook for Mac through ``osascript``."""
+
+    def __init__(self, config: Config):
+        self.config = config
+
+    def is_available(self) -> bool:
+        script = 'tell application "System Events" to (name of processes) contains "Microsoft Outlook"'
+        try:
+            out = self._run(script)
+        except OutlookClientError:
+            return False
+        return out.strip().lower() == "true"
+
+    def iter_messages(self, since: datetime | None = None) -> Iterator[MessageRecord]:
+        script = build_applescript(self.config, since)
+        raw = self._run(script)
+        yield from parse_messages(raw)
+
+    def _run(self, script: str) -> str:
+        try:
+            proc = subprocess.run(
+                ["osascript", "-e", script],
+                capture_output=True,
+                text=True,
+                timeout=600,
+            )
+        except FileNotFoundError as exc:  # not on macOS
+            raise OutlookClientError("osascript not found (macOS required)") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise OutlookClientError("Outlook AppleScript timed out") from exc
+        if proc.returncode != 0:
+            raise OutlookClientError(f"osascript failed: {proc.stderr.strip()}")
+        return proc.stdout
+
+
+class OutlookClientError(RuntimeError):
+    """Raised when the Outlook backend cannot be reached or scripted."""
+
+
+def build_client(config: Config, *, use_mock: bool = False) -> OutlookClientBase:
+    """Return the appropriate client. ``use_mock`` yields a tiny sample set."""
+    if use_mock:
+        return MockOutlookClient(sample_records())
+    return AppleScriptOutlookClient(config)
+
+
+# --------------------------------------------------------------------------- #
+# AppleScript generation                                                      #
+# --------------------------------------------------------------------------- #
+def _applescript_date(dt: datetime) -> str:
+    """Render an AppleScript expression building a `date` for ``dt``."""
+    return (
+        'my makeDate({y}, {mo}, {d}, {h}, {mi}, {s})'.format(
+            y=dt.year, mo=dt.month, d=dt.day, h=dt.hour, mi=dt.minute, s=dt.second
+        )
+    )
+
+
+def build_applescript(config: Config, since: datetime | None) -> str:
+    """Generate the AppleScript that dumps messages as a delimited stream.
+
+    The script targets the Inbox (received) and Sent (sent) top-level folders,
+    recursing into subfolders when configured, and emits one US-delimited record
+    per message terminated by RS.
+    """
+    folders: list[tuple[str, str]] = []
+    if config.folders.inbox:
+        folders.append(("received", "inbox"))
+    if config.folders.sent:
+        folders.append(("sent", "sent mail"))
+
+    recurse = "true" if config.folders.include_subfolders else "false"
+    excluded = ", ".join(f'"{e}"' for e in config.excluded_folders)
+    since_expr = _applescript_date(since) if since else "missing value"
+
+    folder_calls = "\n".join(
+        f'  my collectFolder({root}, "{direction}", sinceDate, excluded, {recurse})'
+        for direction, root in folders
+    )
+
+    return f"""
+property RS : (ASCII character 30)
+property US : (ASCII character 31)
+property excluded : {{{excluded}}}
+property outText : ""
+
+on makeDate(y, mo, d, h, mi, s)
+  set theDate to current date
+  set year of theDate to y
+  set month of theDate to mo
+  set day of theDate to d
+  set hours of theDate to h
+  set minutes of theDate to mi
+  set seconds of theDate to s
+  return theDate
+end makeDate
+
+on isExcluded(folderName)
+  repeat with e in excluded
+    if folderName contains (e as text) then return true
+  end repeat
+  return false
+end isExcluded
+
+on emit(theMsg, direction, folderName)
+  tell application "Microsoft Outlook"
+    set theId to (id of theMsg) as text
+    set theSubject to (subject of theMsg)
+    if theSubject is missing value then set theSubject to ""
+    set theSender to sender of theMsg
+    set sName to ""
+    set sAddr to ""
+    if theSender is not missing value then
+      set sName to (name of theSender)
+      set sAddr to (address of theSender)
+    end if
+    set toStr to my recipients(to recipients of theMsg)
+    set ccStr to my recipients(cc recipients of theMsg)
+    set d to (time received of theMsg)
+    if d is missing value then set d to (time sent of theMsg)
+    set dStr to ((year of d) as text) & "," & (((month of d) as integer) as text) & "," & ((day of d) as text) & "," & ((hours of d) as text) & "," & ((minutes of d) as text) & "," & ((seconds of d) as text)
+    set isRead to (is read of theMsg) as text
+    set cats to ""
+    try
+      set cats to my joinCategories(category of theMsg)
+    end try
+    set prio to "normal"
+    try
+      set prio to (priority of theMsg) as text
+    end try
+    set flagged to "false"
+    try
+      set flagged to (is flagged of theMsg) as text
+    end try
+    set atts to my joinAttachments(attachments of theMsg)
+    set bodyText to ""
+    try
+      set bodyText to (content of theMsg)
+    end try
+    if bodyText is missing value then set bodyText to ""
+    set rec to direction & US & theId & US & theSubject & US & sName & US & sAddr & US & toStr & US & ccStr & US & dStr & US & isRead & US & cats & US & prio & US & flagged & US & atts & US & folderName & US & bodyText
+    set outText to outText & rec & RS
+  end tell
+end emit
+
+on recipients(theList)
+  set parts to {{}}
+  tell application "Microsoft Outlook"
+    repeat with r in theList
+      set rName to ""
+      set rAddr to ""
+      try
+        set ea to email address of r
+        set rName to (name of ea)
+        set rAddr to (address of ea)
+      end try
+      set end of parts to (rName & "{PAIR_SEP}" & rAddr)
+    end repeat
+  end tell
+  set AppleScript's text item delimiters to "{LIST_SEP}"
+  set s to parts as text
+  set AppleScript's text item delimiters to ""
+  return s
+end recipients
+
+on joinCategories(theCats)
+  set parts to {{}}
+  tell application "Microsoft Outlook"
+    repeat with c in theCats
+      try
+        set end of parts to (name of c)
+      end try
+    end repeat
+  end tell
+  set AppleScript's text item delimiters to "{LIST_SEP}"
+  set s to parts as text
+  set AppleScript's text item delimiters to ""
+  return s
+end joinCategories
+
+on joinAttachments(theAtts)
+  set parts to {{}}
+  tell application "Microsoft Outlook"
+    repeat with a in theAtts
+      set aName to ""
+      try
+        set aName to (name of a)
+      end try
+      set end of parts to (aName & "{PAIR_SEP}{PAIR_SEP}0")
+    end repeat
+  end tell
+  set AppleScript's text item delimiters to "{LIST_SEP}"
+  set s to parts as text
+  set AppleScript's text item delimiters to ""
+  return s
+end joinAttachments
+
+on collectFolder(theFolder, direction, sinceDate, excludedNames, recurse)
+  tell application "Microsoft Outlook"
+    set folderName to ""
+    try
+      set folderName to name of theFolder
+    end try
+    if my isExcluded(folderName) then return
+    set msgs to {{}}
+    try
+      if sinceDate is missing value then
+        set msgs to (messages of theFolder)
+      else
+        set msgs to (messages of theFolder whose time received ≥ sinceDate)
+      end if
+    end try
+    repeat with m in msgs
+      try
+        my emit(m, direction, folderName)
+      end try
+    end repeat
+    if recurse then
+      try
+        repeat with sub in (mail folders of theFolder)
+          my collectFolder(sub, direction, sinceDate, excludedNames, recurse)
+        end repeat
+      end try
+    end if
+  end tell
+end collectFolder
+
+set sinceDate to {since_expr}
+{folder_calls}
+return outText
+""".strip()
+
+
+# --------------------------------------------------------------------------- #
+# Output parsing                                                              #
+# --------------------------------------------------------------------------- #
+def _parse_recipients(raw: str) -> list[Recipient]:
+    recipients: list[Recipient] = []
+    for chunk in raw.split(LIST_SEP):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        name, _, email = chunk.partition(PAIR_SEP)
+        recipients.append(Recipient(name.strip(), email.strip()))
+    return recipients
+
+
+def _parse_attachments(raw: str) -> list[Attachment]:
+    attachments: list[Attachment] = []
+    for chunk in raw.split(LIST_SEP):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        parts = chunk.split(PAIR_SEP)
+        name = parts[0].strip()
+        if not name:
+            continue
+        size = 0
+        if len(parts) >= 3 and parts[2].strip().isdigit():
+            size = int(parts[2].strip())
+        ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        attachments.append(Attachment(name=name, size_bytes=size, extension=ext))
+    return attachments
+
+
+def _parse_date(raw: str) -> datetime:
+    parts = [int(p) for p in raw.split(",")]
+    while len(parts) < 6:
+        parts.append(0)
+    y, mo, d, h, mi, s = parts[:6]
+    return datetime(y, mo, d, h, mi, s).astimezone()
+
+
+def _parse_importance(raw: str) -> str:
+    value = raw.lower()
+    if "high" in value:
+        return "high"
+    if "low" in value:
+        return "low"
+    return "normal"
+
+
+def _looks_like_html(text: str) -> bool:
+    sample = text[:2000].lower()
+    return any(tag in sample for tag in ("<html", "<body", "<div", "<p>", "<table", "<br"))
+
+
+def parse_messages(raw: str) -> list[MessageRecord]:
+    """Parse the AppleScript output stream into :class:`MessageRecord` objects."""
+    records: list[MessageRecord] = []
+    for block in raw.split(RS):
+        if not block.strip():
+            continue
+        fields = block.split(US, _FIELD_COUNT - 1)
+        if len(fields) < _FIELD_COUNT:
+            logger.warning("Skipping malformed message record (%d fields)", len(fields))
+            continue
+        (
+            direction,
+            entry_id,
+            subject,
+            sender_name,
+            sender_email,
+            to_raw,
+            cc_raw,
+            date_raw,
+            is_read_raw,
+            categories_raw,
+            priority_raw,
+            flagged_raw,
+            attachments_raw,
+            folder_path,
+            body,
+        ) = fields
+
+        try:
+            date = _parse_date(date_raw)
+        except (ValueError, IndexError):
+            logger.warning("Skipping message %s: bad date %r", entry_id, date_raw)
+            continue
+
+        body = body.strip("\r\n")
+        is_html = _looks_like_html(body)
+        categories = [c.strip() for c in categories_raw.split(LIST_SEP) if c.strip()]
+
+        records.append(
+            MessageRecord(
+                entry_id=entry_id.strip(),
+                subject=subject.strip(),
+                direction=direction.strip() or "received",
+                sender_name=sender_name.strip(),
+                sender_email=sender_email.strip(),
+                date=date,
+                to=_parse_recipients(to_raw),
+                cc=_parse_recipients(cc_raw),
+                categories=categories,
+                flag="flagged" if flagged_raw.strip().lower() == "true" else "none",
+                importance=_parse_importance(priority_raw),
+                unread=is_read_raw.strip().lower() != "true",
+                body_html=body if is_html else None,
+                body_plain="" if is_html else body,
+                attachments=_parse_attachments(attachments_raw),
+                folder_path=folder_path.strip(),
+            )
+        )
+    return records
+
+
+def sample_records() -> list[MessageRecord]:
+    """A small, deterministic sample conversation for --mock / demos."""
+    from datetime import timezone, timedelta
+
+    tz = timezone(timedelta(hours=10))
+    return [
+        MessageRecord(
+            entry_id="0001",
+            subject="EFTPOS terminal error at site 0234",
+            direction="received",
+            sender_name="Tanaka Hiroshi",
+            sender_email="h.tanaka@example.com",
+            date=datetime(2026, 5, 27, 9, 15, 0, tzinfo=tz),
+            to=[Recipient("Yoshi", "yoshi@unitedpetroleum.com.au")],
+            categories=["EFTPOS", "Urgent"],
+            flag="flagged",
+            importance="high",
+            unread=True,
+            body_html="<p>Hi Yoshi,</p><p>The EFTPOS terminal at site 0234 is showing error 51.</p>",
+            attachments=[Attachment("screenshot.png", 18234, "png")],
+            folder_path="Inbox/Support",
+        ),
+        MessageRecord(
+            entry_id="0002",
+            subject="RE: EFTPOS terminal error at site 0234",
+            direction="sent",
+            sender_name="Yoshi",
+            sender_email="yoshi@unitedpetroleum.com.au",
+            date=datetime(2026, 5, 27, 11, 42, 0, tzinfo=tz),
+            to=[Recipient("Tanaka Hiroshi", "h.tanaka@example.com")],
+            body_plain="Hi Tanaka,\n\nPlease reboot the terminal and retry.\n\n-- \nYoshi\nUnited Petroleum",
+            folder_path="Sent Items",
+        ),
+    ]
