@@ -19,7 +19,8 @@ Dataview / 検索 / バックリンクから活用できます。
 | `conversation_id` | Exchange `ConversationID` | **件名（RE:/FW: 除去）から導出**（topic グルーピング） |
 | 本文 | `HTMLBody` / `Body` | `content`（HTML 判定してフォールバック） |
 | メッセージ `Size` | `Size` | 取得不可 → `size_bytes: 0` |
-| フラグ | none/flagged/completed | flagged / none のみ（completed 非対応） |
+| 既読/未読・フラグ | `UnRead` / flag | AppleScript 予約語 `is`（`is read`/`is flagged`）の都合で堅牢に取得できないため省略 → `unread: false` / `flag: none` 固定 |
+| 送信済みフォルダ | "Sent Items" | 名前一致で探索（`mail folders whose name contains "Sent"`） |
 | 定期実行 | タスクスケジューラ / `.bat` | **launchd** (`*.plist`) |
 | パッケージ | `.exe` 相当 | **`.app`**（py2app） |
 | UI | （CLI） | CLI 中心 + 最小ステータス画面（Tkinter） |

@@ -11,8 +11,12 @@ Known Mac-vs-Windows differences (see README "Deviations"):
 * ``ConversationID`` is **not** exposed by Outlook for Mac AppleScript, so it is
   derived from the normalised subject (RE:/FW: stripped). Threading therefore
   groups by topic rather than by Exchange conversation.
-* Message ``Size`` and flag "completed" state are not exposed → recorded as 0 /
-  collapsed to flagged|none.
+* Message ``Size``, read/unread, and flag state are not captured: ``is read`` /
+  ``is flagged`` start with the AppleScript reserved word ``is`` and fail to
+  compile across Outlook versions, so they are omitted for robustness. These are
+  recorded as size 0, ``unread: false``, ``flag: none``.
+* The Sent folder is located by name match (``mail folders whose name contains
+  "Sent"``); there is no reliable ``sent mail`` keyword.
 
 The AppleScript generation here is the single most version-sensitive part of the
 project. The Python pipeline downstream is fully decoupled and unit-tested via
@@ -211,20 +215,31 @@ def build_applescript(config: Config, since: datetime | None) -> str:
     recursing into subfolders when configured, and emits one US-delimited record
     per message terminated by RS.
     """
-    folders: list[tuple[str, str]] = []
-    if config.folders.inbox:
-        folders.append(("received", "inbox"))
-    if config.folders.sent:
-        folders.append(("sent", "sent mail"))
-
     recurse = "true" if config.folders.include_subfolders else "false"
     excluded = ", ".join(f'"{e}"' for e in config.excluded_folders)
     since_expr = _applescript_date(since) if since else "missing value"
 
-    folder_calls = "\n".join(
-        f'  my collectFolder({root}, "{direction}", sinceDate, excluded, {recurse})'
-        for direction, root in folders
-    )
+    # Build the run section. The Inbox is reached via the well-known `inbox`
+    # property; the Sent folder is found by name match (Outlook for Mac has no
+    # reliable `sent mail` keyword). Both are wrapped in `try` so an unsupported
+    # term degrades gracefully (that folder is skipped) instead of crashing.
+    run_lines = [f"set sinceDate to {since_expr}", 'tell application "Microsoft Outlook"']
+    if config.folders.inbox:
+        run_lines += [
+            "  try",
+            f'    my collectFolder(inbox, "received", sinceDate, {recurse})',
+            "  end try",
+        ]
+    if config.folders.sent:
+        run_lines += [
+            "  try",
+            '    repeat with sf in (mail folders whose name contains "Sent")',
+            f'      my collectFolder(sf, "sent", sinceDate, {recurse})',
+            "    end repeat",
+            "  end try",
+        ]
+    run_lines += ["end tell", "return outText"]
+    run_section = "\n".join(run_lines)
 
     return f"""
 property RS : (ASCII character 30)
@@ -267,7 +282,7 @@ on emit(theMsg, direction, folderName)
     set d to (time received of theMsg)
     if d is missing value then set d to (time sent of theMsg)
     set dStr to ((year of d) as text) & "," & (((month of d) as integer) as text) & "," & ((day of d) as text) & "," & ((hours of d) as text) & "," & ((minutes of d) as text) & "," & ((seconds of d) as text)
-    set isRead to (is read of theMsg) as text
+    set isRead to "false"
     set cats to ""
     try
       set cats to my joinCategories(category of theMsg)
@@ -277,9 +292,6 @@ on emit(theMsg, direction, folderName)
       set prio to (priority of theMsg) as text
     end try
     set flagged to "false"
-    try
-      set flagged to (is flagged of theMsg) as text
-    end try
     set atts to my joinAttachments(attachments of theMsg)
     set bodyText to ""
     try
@@ -343,7 +355,7 @@ on joinAttachments(theAtts)
   return s
 end joinAttachments
 
-on collectFolder(theFolder, direction, sinceDate, excludedNames, recurse)
+on collectFolder(theFolder, direction, sinceDate, recurse)
   tell application "Microsoft Outlook"
     set folderName to ""
     try
@@ -366,16 +378,14 @@ on collectFolder(theFolder, direction, sinceDate, excludedNames, recurse)
     if recurse then
       try
         repeat with sub in (mail folders of theFolder)
-          my collectFolder(sub, direction, sinceDate, excludedNames, recurse)
+          my collectFolder(sub, direction, sinceDate, recurse)
         end repeat
       end try
     end if
   end tell
 end collectFolder
 
-set sinceDate to {since_expr}
-{folder_calls}
-return outText
+{run_section}
 """.strip()
 
 
