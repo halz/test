@@ -47,6 +47,10 @@ class SyncConfig:
 
     initial_full_import: bool = True
     lookback_buffer_minutes: int = 60
+    # Per-call timeout for the AppleScript Outlook query. Large mailboxes need
+    # more than the previous 600s default — AppleScript string concatenation
+    # of message bodies is O(n²) so 10k+ messages can easily exceed it.
+    applescript_timeout_seconds: int = 1800
 
 
 @dataclass

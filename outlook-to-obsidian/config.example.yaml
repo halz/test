@@ -44,6 +44,9 @@ output:
 sync:
   initial_full_import: true       # 初回は全件取り込み
   lookback_buffer_minutes: 60     # 差分同期時のバッファ（時計ズレ対策）
+  applescript_timeout_seconds: 1800  # AppleScript 1回あたりのタイムアウト（既定30分）。
+                                  # 大規模メールボックスではこれより小さくしないこと。
+                                  # それでも足りない場合は --since で期間チャンク。
 
 # 自動スケジュール（macOS launchd LaunchAgent）
 # `python -m src.main schedule install/uninstall/status/preview` で操作。

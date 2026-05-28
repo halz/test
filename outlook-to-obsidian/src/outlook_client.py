@@ -219,17 +219,21 @@ class AppleScriptOutlookClient(OutlookClientBase):
         return "\n".join(lines)
 
     def _run(self, script: str) -> str:
+        timeout = self.config.sync.applescript_timeout_seconds
         try:
             proc = subprocess.run(
                 ["osascript", "-e", script],
                 capture_output=True,
                 text=True,
-                timeout=600,
+                timeout=timeout,
             )
         except FileNotFoundError as exc:  # not on macOS
             raise OutlookClientError("osascript not found (macOS required)") from exc
         except subprocess.TimeoutExpired as exc:
-            raise OutlookClientError("Outlook AppleScript timed out") from exc
+            raise OutlookClientError(
+                f"Outlook AppleScript timed out after {timeout}s — try --since to "
+                "chunk the import, or raise sync.applescript_timeout_seconds"
+            ) from exc
         if proc.returncode != 0:
             raise OutlookClientError(f"osascript failed: {proc.stderr.strip()}")
         return proc.stdout
