@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+from src.config import Config
 from src.outlook_client import (
     LIST_SEP,
     PAIR_SEP,
     RS,
     US,
     MockOutlookClient,
+    build_applescript,
     clean_topic,
     derive_conversation_id,
     parse_messages,
@@ -90,3 +94,20 @@ def test_mock_client_diagnose_lists_folders() -> None:
     assert "mock client: 2 sample messages" in report
     assert "Inbox/Support: 1" in report
     assert "Sent Items: 1" in report
+
+
+def test_build_applescript_uses_localized_sent_patterns(tmp_path: Path) -> None:
+    config = Config(vault_path=tmp_path)
+    script = build_applescript(config, since=None)
+    # default patterns: English + Japanese
+    assert 'mail folders whose name contains "Sent"' in script
+    assert 'mail folders whose name contains "送信済み"' in script
+
+
+def test_build_applescript_respects_custom_sent_patterns(tmp_path: Path) -> None:
+    config = Config(vault_path=tmp_path)
+    config.folders.sent_name_patterns = ["Gesendet", "Enviado"]
+    script = build_applescript(config, since=None)
+    assert 'mail folders whose name contains "Gesendet"' in script
+    assert 'mail folders whose name contains "Enviado"' in script
+    assert 'mail folders whose name contains "Sent"' not in script

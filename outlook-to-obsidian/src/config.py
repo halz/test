@@ -22,6 +22,12 @@ class FoldersConfig:
     inbox: bool = True
     sent: bool = True
     include_subfolders: bool = True
+    # Name fragments to match the Sent folder. Outlook for Mac AppleScript has
+    # no reliable "sent items" keyword, so we name-match. Include localized
+    # variants — default covers English + Japanese.
+    sent_name_patterns: list[str] = field(
+        default_factory=lambda: ["Sent", "送信済み"]
+    )
 
 
 @dataclass

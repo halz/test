@@ -200,8 +200,9 @@ class AppleScriptOutlookClient(OutlookClientBase):
         if proc != "true":
             lines.append("→ Microsoft Outlook を起動してから再実行してください。")
             return "\n".join(lines)
+        script = _build_diagnose_script(self.config.folders.sent_name_patterns)
         try:
-            raw = self._run(_DIAGNOSE_SCRIPT)
+            raw = self._run(script)
         except OutlookClientError as exc:
             lines.append(f"Outlook scripting failed: {exc}")
             lines.append(
@@ -210,6 +211,9 @@ class AppleScriptOutlookClient(OutlookClientBase):
             )
             return "\n".join(lines)
         lines.append("Outlook scripting access: OK")
+        lines.append(
+            f"Sent name patterns:  {self.config.folders.sent_name_patterns}"
+        )
         lines.append("--- top-level mail folders (name | direct message count) ---")
         lines.append(raw.rstrip("\n") or "(empty)")
         return "\n".join(lines)
@@ -235,7 +239,31 @@ class OutlookClientError(RuntimeError):
     """Raised when the Outlook backend cannot be reached or scripted."""
 
 
-_DIAGNOSE_SCRIPT = """
+def _build_diagnose_script(sent_patterns: list[str]) -> str:
+    sent_blocks: list[str] = []
+    for pattern in sent_patterns:
+        safe = pattern.replace('"', '\\"')
+        sent_blocks.append(
+            f"""    try
+        set sentList to (mail folders whose name contains "{safe}")
+        set out to out & "SENT  | pattern=\\"{safe}\\" matches=" & ((count of sentList) as text) & linefeed
+        repeat with sf in sentList
+            set sname to "?"
+            try
+                set sname to name of sf
+            end try
+            set scnt to -1
+            try
+                set scnt to count of messages of sf
+            end try
+            set out to out & "SENT  | " & sname & " | " & (scnt as text) & linefeed
+        end repeat
+    on error errMsg
+        set out to out & "SENT  | ERROR pattern=\\"{safe}\\" | " & errMsg & linefeed
+    end try"""
+        )
+    sent_section = "\n".join(sent_blocks)
+    return f"""
 tell application "Microsoft Outlook"
     set out to ""
     try
@@ -260,23 +288,7 @@ tell application "Microsoft Outlook"
     on error errMsg
         set out to out & "TOP   | ERROR | " & errMsg & linefeed
     end try
-    try
-        set sentList to (mail folders whose name contains "Sent")
-        set out to out & "SENT  | matches | " & ((count of sentList) as text) & linefeed
-        repeat with sf in sentList
-            set sname to "?"
-            try
-                set sname to name of sf
-            end try
-            set scnt to -1
-            try
-                set scnt to count of messages of sf
-            end try
-            set out to out & "SENT  | " & sname & " | " & (scnt as text) & linefeed
-        end repeat
-    on error errMsg
-        set out to out & "SENT  | ERROR | " & errMsg & linefeed
-    end try
+{sent_section}
     return out
 end tell
 """
@@ -324,13 +336,15 @@ def build_applescript(config: Config, since: datetime | None) -> str:
             "  end try",
         ]
     if config.folders.sent:
-        run_lines += [
-            "  try",
-            '    repeat with sf in (mail folders whose name contains "Sent")',
-            f'      my collectFolder(sf, "sent", sinceDate, {recurse})',
-            "    end repeat",
-            "  end try",
-        ]
+        for pattern in config.folders.sent_name_patterns:
+            safe = pattern.replace('"', '\\"')
+            run_lines += [
+                "  try",
+                f'    repeat with sf in (mail folders whose name contains "{safe}")',
+                f'      my collectFolder(sf, "sent", sinceDate, {recurse})',
+                "    end repeat",
+                "  end try",
+            ]
     run_lines += ["end tell", "return outText"]
     run_section = "\n".join(run_lines)
 
