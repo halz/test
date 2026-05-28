@@ -70,8 +70,11 @@ class StatusApp:
         ttk.Button(buttons, text="出力先を選択…", command=self.choose_output_dir).grid(
             row=1, column=2, padx=8, sticky="w"
         )
-        ttk.Button(buttons, text="更新", command=self.refresh).grid(
+        ttk.Button(buttons, text="診断", command=self.on_diagnose).grid(
             row=1, column=3, padx=8, sticky="w"
+        )
+        ttk.Button(buttons, text="更新", command=self.refresh).grid(
+            row=1, column=4, padx=8, sticky="w"
         )
 
         ttk.Label(container, text="状態 / Log", font=("Helvetica", 11, "bold")).pack(
@@ -151,6 +154,28 @@ class StatusApp:
         self.full_btn.configure(state="normal")
         self._log(message)
         self.refresh()
+
+    def on_diagnose(self) -> None:
+        self._log("--- 診断を実行中 ---")
+        threading.Thread(target=self._diagnose_worker, daemon=True).start()
+
+    def _diagnose_worker(self) -> None:
+        lines = [
+            f"Vault:              {self.config.vault_path}",
+            f"Output:             {self.config.emails_dir}",
+            f"Excluded folders:   {self.config.excluded_folders}",
+            f"Include subfolders: {self.config.folders.include_subfolders}",
+            f"Inbox / Sent:       {self.config.folders.inbox} / {self.config.folders.sent}",
+        ]
+        try:
+            from .outlook_client import build_client
+
+            lines.append(build_client(self.config).diagnose())
+        except Exception as exc:  # noqa: BLE001
+            lines.append(f"診断エラー: {exc}")
+        lines.append("--- 診断ここまで ---")
+        message = "\n".join(lines)
+        self.root.after(0, lambda: self._log(message))
 
     def choose_output_dir(self) -> None:
         """Pick a vault-relative output folder (applies for this session)."""

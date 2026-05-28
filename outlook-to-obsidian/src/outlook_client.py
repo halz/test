@@ -132,6 +132,10 @@ class OutlookClientBase(ABC):
     def iter_messages(self, since: datetime | None = None) -> Iterator[MessageRecord]:
         """Yield messages, optionally only those on/after ``since``."""
 
+    @abstractmethod
+    def diagnose(self) -> str:
+        """Return a human-readable probe of what the backend can see."""
+
 
 class MockOutlookClient(OutlookClientBase):
     """In-memory client used for tests and ``--mock`` dry-runs."""
@@ -147,6 +151,15 @@ class MockOutlookClient(OutlookClientBase):
             if since is not None and record.date < since:
                 continue
             yield record
+
+    def diagnose(self) -> str:
+        folders: dict[str, int] = {}
+        for r in self._records:
+            folders[r.folder_path or "(none)"] = folders.get(r.folder_path or "(none)", 0) + 1
+        lines = [f"mock client: {len(self._records)} sample messages"]
+        for name, n in sorted(folders.items()):
+            lines.append(f"  {name}: {n}")
+        return "\n".join(lines)
 
 
 class AppleScriptOutlookClient(OutlookClientBase):
@@ -166,7 +179,40 @@ class AppleScriptOutlookClient(OutlookClientBase):
     def iter_messages(self, since: datetime | None = None) -> Iterator[MessageRecord]:
         script = build_applescript(self.config, since)
         raw = self._run(script)
-        yield from parse_messages(raw)
+        logger.info(
+            "AppleScript output: %d bytes, %d record-separator(s)",
+            len(raw),
+            raw.count(RS),
+        )
+        records = parse_messages(raw)
+        logger.info("Parsed %d MessageRecord(s) from AppleScript output", len(records))
+        yield from records
+
+    def diagnose(self) -> str:
+        lines: list[str] = []
+        try:
+            proc = self._run(
+                'tell application "System Events" to (name of processes) contains "Microsoft Outlook"'
+            ).strip().lower()
+        except OutlookClientError as exc:
+            return f"System Events probe failed: {exc}"
+        lines.append(f"Outlook process running: {proc}")
+        if proc != "true":
+            lines.append("→ Microsoft Outlook を起動してから再実行してください。")
+            return "\n".join(lines)
+        try:
+            raw = self._run(_DIAGNOSE_SCRIPT)
+        except OutlookClientError as exc:
+            lines.append(f"Outlook scripting failed: {exc}")
+            lines.append(
+                "→ システム設定 > プライバシーとセキュリティ > オートメーション で、"
+                "実行プロセス（Python / Terminal / .app）に Microsoft Outlook の許可を与えてください。"
+            )
+            return "\n".join(lines)
+        lines.append("Outlook scripting access: OK")
+        lines.append("--- top-level mail folders (name | direct message count) ---")
+        lines.append(raw.rstrip("\n") or "(empty)")
+        return "\n".join(lines)
 
     def _run(self, script: str) -> str:
         try:
@@ -187,6 +233,53 @@ class AppleScriptOutlookClient(OutlookClientBase):
 
 class OutlookClientError(RuntimeError):
     """Raised when the Outlook backend cannot be reached or scripted."""
+
+
+_DIAGNOSE_SCRIPT = """
+tell application "Microsoft Outlook"
+    set out to ""
+    try
+        set inboxName to name of inbox
+        set inboxCount to count of messages of inbox
+        set out to out & "INBOX | " & inboxName & " | " & (inboxCount as text) & linefeed
+    on error errMsg
+        set out to out & "INBOX | ERROR | " & errMsg & linefeed
+    end try
+    try
+        repeat with f in mail folders
+            set fname to "?"
+            try
+                set fname to name of f
+            end try
+            set cnt to -1
+            try
+                set cnt to count of messages of f
+            end try
+            set out to out & "TOP   | " & fname & " | " & (cnt as text) & linefeed
+        end repeat
+    on error errMsg
+        set out to out & "TOP   | ERROR | " & errMsg & linefeed
+    end try
+    try
+        set sentList to (mail folders whose name contains "Sent")
+        set out to out & "SENT  | matches | " & ((count of sentList) as text) & linefeed
+        repeat with sf in sentList
+            set sname to "?"
+            try
+                set sname to name of sf
+            end try
+            set scnt to -1
+            try
+                set scnt to count of messages of sf
+            end try
+            set out to out & "SENT  | " & sname & " | " & (scnt as text) & linefeed
+        end repeat
+    on error errMsg
+        set out to out & "SENT  | ERROR | " & errMsg & linefeed
+    end try
+    return out
+end tell
+"""
 
 
 def build_client(config: Config, *, use_mock: bool = False) -> OutlookClientBase:

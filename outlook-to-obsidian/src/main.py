@@ -244,6 +244,27 @@ def cmd_reset(args: argparse.Namespace, config: Config) -> int:
     return 0
 
 
+def cmd_doctor(args: argparse.Namespace, config: Config) -> int:
+    print("=== Outlook → Obsidian Doctor ===")
+    print(f"Vault:              {config.vault_path}")
+    print(f"Output subdir:      {config.output_subdir!r} → {config.emails_dir}")
+    print(f"Excluded folders:   {config.excluded_folders}")
+    print(f"Include subfolders: {config.folders.include_subfolders}")
+    print(f"Inbox enabled:      {config.folders.inbox}")
+    print(f"Sent enabled:       {config.folders.sent}")
+    print(f"DB path:            {config.db_path}")
+    if config.db_path.exists():
+        with SyncState(config.db_path) as state:
+            print(f"DB messages:        {state.message_count()}")
+            print(f"Last OK:            {state.last_successful_sync() or '(never)'}")
+    else:
+        print("DB:                 (does not exist)")
+    print("--- Outlook probe ---")
+    client = build_client(config, use_mock=args.mock)
+    print(client.diagnose())
+    return 0
+
+
 def cmd_gui(args: argparse.Namespace, config: Config) -> int:
     from . import gui
 
@@ -277,6 +298,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_reset = sub.add_parser("reset", help="Wipe the sync DB")
     p_reset.add_argument("--confirm", action="store_true", help="Skip the prompt")
     p_reset.set_defaults(func=cmd_reset)
+
+    p_doctor = sub.add_parser("doctor", help="Probe Outlook scripting access and config")
+    p_doctor.add_argument("--mock", action="store_true", help="Use built-in sample data")
+    p_doctor.set_defaults(func=cmd_doctor)
 
     p_gui = sub.add_parser("gui", help="Open the status window")
     p_gui.set_defaults(func=cmd_gui)

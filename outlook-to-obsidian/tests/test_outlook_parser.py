@@ -5,9 +5,11 @@ from src.outlook_client import (
     PAIR_SEP,
     RS,
     US,
+    MockOutlookClient,
     clean_topic,
     derive_conversation_id,
     parse_messages,
+    sample_records,
 )
 
 
@@ -81,3 +83,10 @@ def test_clean_topic_strips_prefixes() -> None:
 def test_conversation_id_groups_replies() -> None:
     assert derive_conversation_id("RE: Hello") == derive_conversation_id("Hello")
     assert derive_conversation_id("A") != derive_conversation_id("B")
+
+
+def test_mock_client_diagnose_lists_folders() -> None:
+    report = MockOutlookClient(sample_records()).diagnose()
+    assert "mock client: 2 sample messages" in report
+    assert "Inbox/Support: 1" in report
+    assert "Sent Items: 1" in report
