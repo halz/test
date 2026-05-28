@@ -162,19 +162,40 @@ open dist/OutlookObsidianBridge.app   # GUI 起動
 
 ---
 
-## 定期実行（launchd）
+## 定期実行（launchd / cron スケジュール）
 
-`com.unitedpetroleum.outlook-obsidian.plist.example` を編集して導入します。
+`config.yaml` の `schedule:` を設定して **`schedule install`** を実行すれば、
+launchd LaunchAgent を `~/Library/LaunchAgents/com.outlook-obsidian.sync.plist`
+に展開して有効化します。`sync`（増分）が間隔ごとに走ります。
 
-```bash
-# パスを自分の環境に合わせて編集後:
-cp com.unitedpetroleum.outlook-obsidian.plist.example \
-   ~/Library/LaunchAgents/com.unitedpetroleum.outlook-obsidian.plist
-launchctl load ~/Library/LaunchAgents/com.unitedpetroleum.outlook-obsidian.plist
+```yaml
+# config.yaml
+schedule:
+  interval_minutes: 15         # 15分おき
+  # cron: "0 9,18 * * *"       # cron式を使う場合（空でない時はこちらが優先）
+  run_at_login: true
 ```
 
-- ログイン時 + 1 時間ごとに `sync` を実行します。
-- 解除: `launchctl unload ~/Library/LaunchAgents/com.unitedpetroleum.outlook-obsidian.plist`
+```bash
+python -m src.main schedule install     # 設定を読んで plist 生成 + launchctl load
+python -m src.main schedule status      # 読み込まれているか確認
+python -m src.main schedule preview     # 生成される plist を確認だけする（書き込まない）
+python -m src.main schedule uninstall   # 停止 + plist 削除
+```
+
+cron式は **`*`、整数、`,`リスト、`N-M` 範囲、`*/N` ステップ** をサポート。
+launchd の `StartCalendarInterval` に展開されます。
+例:
+
+| cron 式 | 意味 |
+|---|---|
+| `*/15 * * * *` | 15分おき |
+| `0 9 * * 1-5` | 平日9時 |
+| `0 9,18 * * *` | 毎日 9:00 と 18:00 |
+| `*/30 9-17 * * 1-5` | 平日 9-17時の30分おき |
+
+> 旧 `com.unitedpetroleum.outlook-obsidian.plist.example` の手動コピー方式も
+> 引き続き使えますが、上記コマンドの方がパス埋め込み・ログ先指定を自動化できます。
 
 ---
 

@@ -45,6 +45,18 @@ sync:
   initial_full_import: true       # 初回は全件取り込み
   lookback_buffer_minutes: 60     # 差分同期時のバッファ（時計ズレ対策）
 
+# 自動スケジュール（macOS launchd LaunchAgent）
+# `python -m src.main schedule install/uninstall/status/preview` で操作。
+# cron が空でない場合は cron を優先、空なら interval_minutes を使う。
+schedule:
+  interval_minutes: 15            # N分おき（cron 未指定時）
+  # cron: "*/15 * * * *"          # cron式 (minute hour day month weekday)。例:
+  # cron: "0 9 * * 1-5"           #   平日9時
+  # cron: "0 9,18 * * *"          #   毎日 9:00 と 18:00
+  # cron: "*/30 9-17 * * 1-5"     #   平日 9-17時、30分おき
+  cron: ""                        # 空 = interval_minutes を使う
+  run_at_login: true              # ログイン時にも実行 (RunAtLoad)
+
 # ロギング（ファイルは level、コンソールは WARNING 以上）
 logging:
   level: INFO                     # DEBUG / INFO / WARNING / ERROR

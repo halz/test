@@ -271,6 +271,24 @@ def cmd_gui(args: argparse.Namespace, config: Config) -> int:
     return gui.launch(config, args.config)
 
 
+def cmd_schedule(args: argparse.Namespace, config: Config) -> int:
+    from . import scheduler
+
+    try:
+        if args.action == "install":
+            return scheduler.install(config, args.config)
+        if args.action == "uninstall":
+            return scheduler.uninstall()
+        if args.action == "status":
+            return scheduler.status()
+        if args.action == "preview":
+            return scheduler.preview(config, args.config)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    return 2
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="outlook-to-obsidian")
     parser.add_argument(
@@ -305,6 +323,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_gui = sub.add_parser("gui", help="Open the status window")
     p_gui.set_defaults(func=cmd_gui)
+
+    p_schedule = sub.add_parser(
+        "schedule", help="Manage the macOS launchd LaunchAgent schedule"
+    )
+    schedule_sub = p_schedule.add_subparsers(dest="action", required=True)
+    schedule_sub.add_parser("install", help="Install/reload the LaunchAgent from config.yaml")
+    schedule_sub.add_parser("uninstall", help="Stop and remove the LaunchAgent")
+    schedule_sub.add_parser("status", help="Show LaunchAgent status")
+    schedule_sub.add_parser("preview", help="Print the generated plist without installing")
+    p_schedule.set_defaults(func=cmd_schedule)
 
     return parser
 

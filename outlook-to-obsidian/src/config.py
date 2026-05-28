@@ -50,6 +50,20 @@ class SyncConfig:
 
 
 @dataclass
+class ScheduleConfig:
+    """launchd LaunchAgent schedule (used by `schedule install`).
+
+    Either ``cron`` (5-field cron expression) or ``interval_minutes`` is used —
+    if ``cron`` is non-empty it takes precedence. ``run_at_login`` maps to
+    launchd's RunAtLoad.
+    """
+
+    interval_minutes: int = 15
+    cron: str = ""
+    run_at_login: bool = True
+
+
+@dataclass
 class LoggingConfig:
     """Logging destination and rotation."""
 
@@ -72,6 +86,7 @@ class Config:
     )
     output: OutputConfig = field(default_factory=OutputConfig)
     sync: SyncConfig = field(default_factory=SyncConfig)
+    schedule: ScheduleConfig = field(default_factory=ScheduleConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
 
     @property
@@ -102,6 +117,7 @@ class Config:
         folders = FoldersConfig(**_subset(data.get("folders"), FoldersConfig))
         output = OutputConfig(**_subset(data.get("output"), OutputConfig))
         sync = SyncConfig(**_subset(data.get("sync"), SyncConfig))
+        schedule = ScheduleConfig(**_subset(data.get("schedule"), ScheduleConfig))
         logging_cfg = LoggingConfig(**_subset(data.get("logging"), LoggingConfig))
 
         return cls(
@@ -115,6 +131,7 @@ class Config:
             folders=folders,
             output=output,
             sync=sync,
+            schedule=schedule,
             logging=logging_cfg,
         )
 
