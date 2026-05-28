@@ -255,6 +255,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "-c", "--config", default="config.yaml", help="Path to config.yaml"
     )
+    parser.add_argument(
+        "--output-subdir",
+        help="Override config.output_subdir (vault-relative output folder, e.g. 'Work/Emails')",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_sync = sub.add_parser("sync", help="Sync messages (incremental by default)")
@@ -289,6 +293,9 @@ def main(argv: list[str] | None = None) -> int:
     except (FileNotFoundError, ValueError) as exc:
         print(f"ERROR: cannot load config '{args.config}': {exc}", file=sys.stderr)
         return 2
+
+    if args.output_subdir:
+        config.output_subdir = args.output_subdir
 
     setup_logging(
         level=config.logging.level,

@@ -120,6 +120,21 @@ python -m src.main gui
 
 別 Vault/設定を使う場合は `-c path/to/config.yaml` を付与。
 
+出力先フォルダ（Vault 内）を実行時に上書きするには、グローバルオプション
+`--output-subdir`（サブコマンドより前に指定）を使います:
+
+```bash
+# ~/Obsidian/WorkVault/Work/Inbox/ に出力
+python -m src.main --output-subdir "Work/Inbox" sync --full
+```
+
+> 同じ `--output-subdir` を `status` / `rebuild-threads` / `reset` でも指定して
+> ください（DB も出力先フォルダ直下に置かれるため、コマンド間で一致させる必要が
+> あります）。恒久的に変えたい場合は `config.yaml` の `output_subdir` を編集します。
+
+GUI（ステータス画面）では **「出力先を選択…」** ボタンで Vault 内のフォルダを
+選べます（その起動セッション中だけ有効）。
+
 ---
 
 ## 出力構造

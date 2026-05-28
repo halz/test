@@ -12,7 +12,7 @@ import subprocess
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import ttk
+from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
 from .config import Config
@@ -61,8 +61,11 @@ class StatusApp:
         ttk.Button(buttons, text="ログを開く", command=self.open_log).grid(
             row=0, column=2, padx=8
         )
-        ttk.Button(buttons, text="更新", command=self.refresh).grid(
+        ttk.Button(buttons, text="出力先を選択…", command=self.choose_output_dir).grid(
             row=0, column=3, padx=8
+        )
+        ttk.Button(buttons, text="更新", command=self.refresh).grid(
+            row=0, column=4, padx=8
         )
 
         ttk.Label(container, text="状態 / Log", font=("Helvetica", 11, "bold")).pack(
@@ -81,7 +84,11 @@ class StatusApp:
         self.output.configure(state="disabled")
 
     def refresh(self) -> None:
-        lines = [f"Vault:    {self.config.vault_path}", f"Config:   {self.config_path}"]
+        lines = [
+            f"Vault:    {self.config.vault_path}",
+            f"Output:   {self.config.emails_dir}",
+            f"Config:   {self.config_path}",
+        ]
         db_path = self.config.db_path
         if db_path.exists():
             with SyncState(db_path) as state:
@@ -123,6 +130,27 @@ class StatusApp:
         self._syncing = False
         self.sync_btn.configure(state="normal", text="今すぐ同期")
         self._log(message)
+        self.refresh()
+
+    def choose_output_dir(self) -> None:
+        """Pick a vault-relative output folder (applies for this session)."""
+        vault = self.config.vault_path
+        chosen = filedialog.askdirectory(
+            title="出力先フォルダを選択（Vault 内）",
+            initialdir=str(vault) if vault.exists() else str(Path.home()),
+        )
+        if not chosen:
+            return
+        try:
+            rel = Path(chosen).resolve().relative_to(vault.resolve())
+        except ValueError:
+            messagebox.showwarning(
+                "出力先フォルダ",
+                f"Vault 内のフォルダを選んでください。\nVault: {vault}",
+            )
+            return
+        self.config.output_subdir = "" if str(rel) == "." else rel.as_posix()
+        self._log(f"出力先を変更（このセッション）: {self.config.emails_dir}")
         self.refresh()
 
     def open_vault(self) -> None:
