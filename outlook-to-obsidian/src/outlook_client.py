@@ -501,20 +501,25 @@ on collectFolder(theFolder, direction, sinceDate, untilDate, recurse)
     end try
     if my isExcluded(folderName) then return
     set msgs to {{}}
+    -- Lower bound is applied via the well-supported `whose time received ≥ X`.
+    -- The upper bound is enforced per-message below because Outlook for Mac's
+    -- AppleScript dictionary does not reliably parse compound `whose` clauses
+    -- (the previous compound form silently returned an empty set).
     try
-      if sinceDate is missing value and untilDate is missing value then
+      if sinceDate is missing value then
         set msgs to (messages of theFolder)
-      else if untilDate is missing value then
-        set msgs to (messages of theFolder whose time received ≥ sinceDate)
-      else if sinceDate is missing value then
-        set msgs to (messages of theFolder whose time received < untilDate)
       else
-        set msgs to (messages of theFolder whose time received ≥ sinceDate and time received < untilDate)
+        set msgs to (messages of theFolder whose time received ≥ sinceDate)
       end if
     end try
     repeat with m in msgs
       try
-        my emit(m, direction, folderName)
+        set inWindow to true
+        if untilDate is not missing value then
+          set d to (time received of m)
+          if d is not missing value and d ≥ untilDate then set inWindow to false
+        end if
+        if inWindow then my emit(m, direction, folderName)
       end try
     end repeat
     if recurse then
