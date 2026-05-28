@@ -53,19 +53,25 @@ class StatusApp:
 
         buttons = ttk.Frame(container)
         buttons.pack(anchor="w", pady=(0, PAD))
-        self.sync_btn = ttk.Button(buttons, text="今すぐ同期", command=self.on_sync)
-        self.sync_btn.grid(row=0, column=0, padx=(0, 8))
+        self.sync_btn = ttk.Button(
+            buttons, text="今すぐ同期（増分）", command=self.on_sync
+        )
+        self.sync_btn.grid(row=0, column=0, padx=(0, 8), pady=(0, 6), sticky="w")
+        self.full_btn = ttk.Button(
+            buttons, text="全件同期（過去メールを含む）", command=self.on_sync_full
+        )
+        self.full_btn.grid(row=0, column=1, padx=8, pady=(0, 6), sticky="w")
         ttk.Button(buttons, text="Vault を開く", command=self.open_vault).grid(
-            row=0, column=1, padx=8
+            row=1, column=0, padx=(0, 8), sticky="w"
         )
         ttk.Button(buttons, text="ログを開く", command=self.open_log).grid(
-            row=0, column=2, padx=8
+            row=1, column=1, padx=8, sticky="w"
         )
         ttk.Button(buttons, text="出力先を選択…", command=self.choose_output_dir).grid(
-            row=0, column=3, padx=8
+            row=1, column=2, padx=8, sticky="w"
         )
         ttk.Button(buttons, text="更新", command=self.refresh).grid(
-            row=0, column=4, padx=8
+            row=1, column=3, padx=8, sticky="w"
         )
 
         ttk.Label(container, text="状態 / Log", font=("Helvetica", 11, "bold")).pack(
@@ -107,16 +113,29 @@ class StatusApp:
 
     # -- actions ------------------------------------------------------------
     def on_sync(self) -> None:
+        self._start_sync(full=False)
+
+    def on_sync_full(self) -> None:
+        self._start_sync(full=True)
+
+    def _start_sync(self, *, full: bool) -> None:
         if self._syncing:
             return
         self._syncing = True
         self.sync_btn.configure(state="disabled", text="同期中...")
-        self._log("同期を開始しました...")
-        threading.Thread(target=self._sync_worker, daemon=True).start()
+        self.full_btn.configure(state="disabled")
+        self._log(
+            "全件同期を開始しました（過去メールを含む）..."
+            if full
+            else "増分同期を開始しました..."
+        )
+        threading.Thread(
+            target=lambda: self._sync_worker(full), daemon=True
+        ).start()
 
-    def _sync_worker(self) -> None:
+    def _sync_worker(self, full: bool) -> None:
         try:
-            summary = run_sync(self.config)
+            summary = run_sync(self.config, full=full)
             message = (
                 f"完了: added={summary['messages_added']} "
                 f"skipped={summary['messages_skipped']} "
@@ -128,7 +147,8 @@ class StatusApp:
 
     def _sync_done(self, message: str) -> None:
         self._syncing = False
-        self.sync_btn.configure(state="normal", text="今すぐ同期")
+        self.sync_btn.configure(state="normal", text="今すぐ同期（増分）")
+        self.full_btn.configure(state="normal")
         self._log(message)
         self.refresh()
 
