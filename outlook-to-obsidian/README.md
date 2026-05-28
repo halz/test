@@ -102,6 +102,13 @@ python -m src.main sync --dry-run
 # 特定日付以降のみ
 python -m src.main sync --since 2026-01-01
 
+# 過去メールを自動チャンク取り込み（30日ずつ後ろ向きに歩く・5年さかのぼり）
+# 大規模メールボックスはこちらを推奨。`--full` の AppleScript タイムアウト回避。
+python -m src.main backfill                          # デフォルト: 30日×5年, 連続3空でstop
+python -m src.main backfill --chunk-days 14          # 14日ずつ
+python -m src.main backfill --cutoff 2020-01-01      # 明示的な停止日
+python -m src.main backfill --plan                   # 計画だけ表示
+
 # Outlook 不要のサンプルデータで動作確認（パイプライン検証用）
 python -m src.main sync --full --mock --dry-run
 

@@ -129,8 +129,15 @@ class OutlookClientBase(ABC):
         """Return True if the backend can be reached."""
 
     @abstractmethod
-    def iter_messages(self, since: datetime | None = None) -> Iterator[MessageRecord]:
-        """Yield messages, optionally only those on/after ``since``."""
+    def iter_messages(
+        self,
+        since: datetime | None = None,
+        until: datetime | None = None,
+    ) -> Iterator[MessageRecord]:
+        """Yield messages received in the half-open window ``[since, until)``.
+
+        Either bound may be ``None`` to disable that side.
+        """
 
     @abstractmethod
     def diagnose(self) -> str:
@@ -146,9 +153,15 @@ class MockOutlookClient(OutlookClientBase):
     def is_available(self) -> bool:
         return True
 
-    def iter_messages(self, since: datetime | None = None) -> Iterator[MessageRecord]:
+    def iter_messages(
+        self,
+        since: datetime | None = None,
+        until: datetime | None = None,
+    ) -> Iterator[MessageRecord]:
         for record in self._records:
             if since is not None and record.date < since:
+                continue
+            if until is not None and record.date >= until:
                 continue
             yield record
 
@@ -176,8 +189,12 @@ class AppleScriptOutlookClient(OutlookClientBase):
             return False
         return out.strip().lower() == "true"
 
-    def iter_messages(self, since: datetime | None = None) -> Iterator[MessageRecord]:
-        script = build_applescript(self.config, since)
+    def iter_messages(
+        self,
+        since: datetime | None = None,
+        until: datetime | None = None,
+    ) -> Iterator[MessageRecord]:
+        script = build_applescript(self.config, since, until)
         raw = self._run(script)
         logger.info(
             "AppleScript output: %d bytes, %d record-separator(s)",
@@ -317,26 +334,36 @@ def _applescript_date(dt: datetime) -> str:
     )
 
 
-def build_applescript(config: Config, since: datetime | None) -> str:
+def build_applescript(
+    config: Config,
+    since: datetime | None,
+    until: datetime | None = None,
+) -> str:
     """Generate the AppleScript that dumps messages as a delimited stream.
 
     The script targets the Inbox (received) and Sent (sent) top-level folders,
     recursing into subfolders when configured, and emits one US-delimited record
-    per message terminated by RS.
+    per message terminated by RS. Messages are filtered to the half-open window
+    ``[since, until)`` if either bound is supplied.
     """
     recurse = "true" if config.folders.include_subfolders else "false"
     excluded = ", ".join(f'"{e}"' for e in config.excluded_folders)
     since_expr = _applescript_date(since) if since else "missing value"
+    until_expr = _applescript_date(until) if until else "missing value"
 
     # Build the run section. The Inbox is reached via the well-known `inbox`
     # property; the Sent folder is found by name match (Outlook for Mac has no
     # reliable `sent mail` keyword). Both are wrapped in `try` so an unsupported
     # term degrades gracefully (that folder is skipped) instead of crashing.
-    run_lines = [f"set sinceDate to {since_expr}", 'tell application "Microsoft Outlook"']
+    run_lines = [
+        f"set sinceDate to {since_expr}",
+        f"set untilDate to {until_expr}",
+        'tell application "Microsoft Outlook"',
+    ]
     if config.folders.inbox:
         run_lines += [
             "  try",
-            f'    my collectFolder(inbox, "received", sinceDate, {recurse})',
+            f'    my collectFolder(inbox, "received", sinceDate, untilDate, {recurse})',
             "  end try",
         ]
     if config.folders.sent:
@@ -345,7 +372,7 @@ def build_applescript(config: Config, since: datetime | None) -> str:
             run_lines += [
                 "  try",
                 f'    repeat with sf in (mail folders whose name contains "{safe}")',
-                f'      my collectFolder(sf, "sent", sinceDate, {recurse})',
+                f'      my collectFolder(sf, "sent", sinceDate, untilDate, {recurse})',
                 "    end repeat",
                 "  end try",
             ]
@@ -466,7 +493,7 @@ on joinAttachments(theAtts)
   return s
 end joinAttachments
 
-on collectFolder(theFolder, direction, sinceDate, recurse)
+on collectFolder(theFolder, direction, sinceDate, untilDate, recurse)
   tell application "Microsoft Outlook"
     set folderName to ""
     try
@@ -475,10 +502,14 @@ on collectFolder(theFolder, direction, sinceDate, recurse)
     if my isExcluded(folderName) then return
     set msgs to {{}}
     try
-      if sinceDate is missing value then
+      if sinceDate is missing value and untilDate is missing value then
         set msgs to (messages of theFolder)
-      else
+      else if untilDate is missing value then
         set msgs to (messages of theFolder whose time received ≥ sinceDate)
+      else if sinceDate is missing value then
+        set msgs to (messages of theFolder whose time received < untilDate)
+      else
+        set msgs to (messages of theFolder whose time received ≥ sinceDate and time received < untilDate)
       end if
     end try
     repeat with m in msgs
@@ -489,7 +520,7 @@ on collectFolder(theFolder, direction, sinceDate, recurse)
     if recurse then
       try
         repeat with sub in (mail folders of theFolder)
-          my collectFolder(sub, direction, sinceDate, recurse)
+          my collectFolder(sub, direction, sinceDate, untilDate, recurse)
         end repeat
       end try
     end if

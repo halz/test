@@ -73,6 +73,7 @@ def run_sync(
     full: bool = False,
     dry_run: bool = False,
     since: datetime | None = None,
+    until: datetime | None = None,
     use_mock: bool = False,
 ) -> dict[str, Any]:
     """Execute a sync and return a summary dict."""
@@ -94,14 +95,17 @@ def run_sync(
 
         since_filter = _determine_since(state, config, full=full, since=since)
         logger.info(
-            "Sync start (full=%s dry_run=%s mock=%s since=%s)",
+            "Sync start (full=%s dry_run=%s mock=%s since=%s until=%s)",
             full,
             dry_run,
             use_mock,
             since_filter,
+            until,
         )
 
-        for index, record in enumerate(client.iter_messages(since_filter), start=1):
+        for index, record in enumerate(
+            client.iter_messages(since_filter, until), start=1
+        ):
             if _is_excluded(record.folder_path, config.excluded_folders):
                 continue
 
@@ -195,6 +199,80 @@ def cmd_sync(args: argparse.Namespace, config: Config) -> int:
         f"{prefix}added={summary['messages_added']} "
         f"skipped={summary['messages_skipped']} "
         f"threads_rebuilt={summary['threads_rebuilt']}"
+    )
+    return 0
+
+
+def plan_backfill_chunks(
+    end: datetime, cutoff: datetime, chunk_days: int
+) -> list[tuple[datetime, datetime]]:
+    """Return the list of ``(start, end)`` windows to sync, walking backwards."""
+    if chunk_days < 1:
+        raise ValueError("chunk_days must be >= 1")
+    if end <= cutoff:
+        return []
+    chunks: list[tuple[datetime, datetime]] = []
+    cursor = end
+    while cursor > cutoff:
+        start = cursor - timedelta(days=chunk_days)
+        if start < cutoff:
+            start = cutoff
+        chunks.append((start, cursor))
+        cursor = start
+    return chunks
+
+
+def cmd_backfill(args: argparse.Namespace, config: Config) -> int:
+    from datetime import timezone
+
+    if args.cutoff:
+        cutoff = _parse_since(args.cutoff)
+    else:
+        cutoff = datetime.now(timezone.utc).astimezone() - timedelta(
+            days=365 * args.years_back
+        )
+    end = datetime.now(timezone.utc).astimezone() + timedelta(days=1)
+    chunks = plan_backfill_chunks(end, cutoff, args.chunk_days)
+
+    print(
+        f"Backfill plan: {len(chunks)} chunks of {args.chunk_days} days, "
+        f"from {end.date()} back to {cutoff.date()}"
+    )
+    if args.plan:
+        for start, stop in chunks:
+            print(f"  [chunk] {start.date()} → {stop.date()}")
+        return 0
+
+    total_added = total_skipped = empty_streak = chunk_idx = 0
+    for start, stop in chunks:
+        chunk_idx += 1
+        print(
+            f"[chunk {chunk_idx}/{len(chunks)}] {start.date()} → {stop.date()}",
+            flush=True,
+        )
+        try:
+            summary = run_sync(config, since=start, until=stop, use_mock=args.mock)
+        except (FileNotFoundError, OutlookClientError) as exc:
+            print(f"  chunk failed: {exc}; continuing", file=sys.stderr)
+            continue
+        added = summary["messages_added"]
+        skipped = summary["messages_skipped"]
+        total_added += added
+        total_skipped += skipped
+        print(f"  added={added} skipped={skipped}")
+        if added == 0 and skipped == 0:
+            empty_streak += 1
+            if empty_streak >= args.stop_after_empty:
+                print(
+                    f"Stopping early: {empty_streak} consecutive empty chunks "
+                    f"(threshold: --stop-after-empty {args.stop_after_empty})"
+                )
+                break
+        else:
+            empty_streak = 0
+    print(
+        f"\nBackfill done: {chunk_idx} chunk(s) processed, "
+        f"added={total_added} skipped={total_skipped}"
     )
     return 0
 
@@ -306,6 +384,40 @@ def build_parser() -> argparse.ArgumentParser:
     p_sync.add_argument("--since", help="Only messages on/after this date (YYYY-MM-DD)")
     p_sync.add_argument("--mock", action="store_true", help="Use built-in sample data")
     p_sync.set_defaults(func=cmd_sync)
+
+    p_backfill = sub.add_parser(
+        "backfill",
+        help="Chunked backward import of historical mail (resumable, bounded per chunk)",
+    )
+    p_backfill.add_argument(
+        "--chunk-days", type=int, default=30, help="Days per chunk (default 30)"
+    )
+    p_backfill.add_argument(
+        "--cutoff",
+        help="Don't sync mail received before this date (YYYY-MM-DD). "
+        "Default: --years-back years before today.",
+    )
+    p_backfill.add_argument(
+        "--years-back",
+        type=int,
+        default=5,
+        help="Default cutoff: N years before today when --cutoff not given (default 5)",
+    )
+    p_backfill.add_argument(
+        "--stop-after-empty",
+        type=int,
+        default=3,
+        help="Stop after N consecutive chunks returning 0 messages (default 3)",
+    )
+    p_backfill.add_argument(
+        "--plan",
+        action="store_true",
+        help="Print the planned chunks and exit without running them",
+    )
+    p_backfill.add_argument(
+        "--mock", action="store_true", help="Use built-in sample data"
+    )
+    p_backfill.set_defaults(func=cmd_backfill)
 
     p_rebuild = sub.add_parser("rebuild-threads", help="Regenerate thread notes only")
     p_rebuild.set_defaults(func=cmd_rebuild_threads)

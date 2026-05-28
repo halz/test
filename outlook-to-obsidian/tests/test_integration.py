@@ -62,3 +62,68 @@ def test_cli_output_subdir_flag_is_global() -> None:
     assert args.output_subdir == "X/Y"
     assert args.command == "sync"
     assert args.full is True
+
+
+def test_plan_backfill_chunks_walks_backwards() -> None:
+    from datetime import datetime, timezone
+
+    from src.main import plan_backfill_chunks
+
+    end = datetime(2026, 5, 28, tzinfo=timezone.utc)
+    cutoff = datetime(2026, 3, 1, tzinfo=timezone.utc)
+    chunks = plan_backfill_chunks(end, cutoff, chunk_days=30)
+    # Expect 3 chunks: [Apr 28, May 28), [Mar 29, Apr 28), [Mar 1, Mar 29)
+    assert len(chunks) == 3
+    assert chunks[0] == (datetime(2026, 4, 28, tzinfo=timezone.utc), end)
+    assert chunks[-1][0] == cutoff
+
+
+def test_plan_backfill_chunks_empty_when_cutoff_in_future() -> None:
+    from datetime import datetime, timezone
+
+    from src.main import plan_backfill_chunks
+
+    end = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    cutoff = datetime(2027, 1, 1, tzinfo=timezone.utc)
+    assert plan_backfill_chunks(end, cutoff, 30) == []
+
+
+def test_run_sync_until_excludes_newer_messages(tmp_path) -> None:
+    from datetime import datetime, timezone
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    config = Config(vault_path=vault)
+    # sample dates: 2026-05-27 09:15 +10 (= 23:15 UTC May 26) and 11:42 +10 (01:42 UTC May 27)
+    until = datetime(2026, 5, 27, 0, 0, 0, tzinfo=timezone.utc)
+    summary = run_sync(config, full=True, use_mock=True, until=until)
+    assert summary["messages_added"] == 1  # only the earlier message
+
+
+def test_backfill_command_runs_chunks_with_mock(tmp_path) -> None:
+    from src.main import main
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        f"vault_path: \"{vault}\"\n"
+        f"logging:\n  file: \"{tmp_path / 'sync.log'}\"\n"
+    )
+    # Use a tight window around the sample messages, 1 chunk only
+    code = main(
+        [
+            "-c",
+            str(cfg),
+            "backfill",
+            "--mock",
+            "--chunk-days",
+            "30",
+            "--cutoff",
+            "2026-04-01",
+            "--stop-after-empty",
+            "1",
+        ]
+    )
+    assert code == 0
+    assert list((vault / "Emails" / "Messages").rglob("*.md"))
