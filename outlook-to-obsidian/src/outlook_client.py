@@ -245,18 +245,18 @@ class AppleScriptOutlookClient(OutlookClientBase):
         except OutlookClientError as exc:
             lines.append(f"date-filter probe failed: {exc}")
 
-        # Real-path probe: run the actual build_applescript query for a tiny
-        # 1-hour window so we exercise the full handler / collectFolder / emit
-        # chain without paying the cost of fetching hundreds of message bodies.
+        # Real-path probe: run the actual build_applescript query for a 6-hour
+        # window — small enough to be quick, wide enough to almost always
+        # contain at least one message for an active mailbox.
         try:
             from datetime import timedelta
 
             now = datetime.now().astimezone()
-            since = now - timedelta(hours=1)
+            since = now - timedelta(hours=6)
             script = build_applescript(self.config, since, None, now)
             raw = self._run(script)
             recs = parse_messages(raw)
-            lines.append("--- real-path probe (build_applescript, since 1 hour) ---")
+            lines.append("--- real-path probe (build_applescript, since 6 hours) ---")
             since_line = next(
                 (ln for ln in script.splitlines() if "set sinceCut" in ln), "?"
             )
@@ -540,6 +540,11 @@ on probeEmitMimic(theFolder, sinceCut)
                 return "ERR to recipients: " & errMsg
             end try
             try
+                set _x to cc recipients of theMsg
+            on error errMsg
+                return "ERR cc recipients: " & errMsg
+            end try
+            try
                 set _d to (time received of theMsg)
             on error errMsg
                 return "ERR time received: " & errMsg
@@ -570,16 +575,28 @@ on probeEmitMimic(theFolder, sinceCut)
                 return "ERR minutes of d: " & errMsg
             end try
             try
-                set _x to (seconds of _d) as text
+                set _x to category of theMsg
             on error errMsg
-                return "ERR seconds of d: " & errMsg
+                return "ERR category: " & errMsg
             end try
             try
-                set _x to (content of theMsg)
+                set _x to (priority of theMsg) as text
             on error errMsg
-                return "ERR content: " & errMsg
+                return "ERR priority: " & errMsg
             end try
-            return "OK first msg passes all reads"
+            try
+                set _x to attachments of theMsg
+            on error errMsg
+                return "ERR attachments: " & errMsg
+            end try
+            try
+                with timeout of 15 seconds
+                    set _body to (content of theMsg)
+                end timeout
+            on error errMsg
+                return "ERR content (or timeout): " & errMsg
+            end try
+            return "OK first msg passes all emit reads"
         end repeat
         return "no messages match"
     end tell
@@ -779,7 +796,9 @@ on emit(theMsg, direction, folderName)
     set atts to my joinAttachments(attachments of theMsg)
     set bodyText to ""
     try
-      set bodyText to (content of theMsg)
+      with timeout of 30 seconds
+        set bodyText to (content of theMsg)
+      end timeout
     end try
     if bodyText is missing value then set bodyText to ""
     set rec to direction & US & theId & US & theSubject & US & sName & US & sAddr & US & toStr & US & ccStr & US & dStr & US & isRead & US & cats & US & prio & US & flagged & US & atts & US & folderName & US & bodyText
