@@ -113,33 +113,44 @@ def test_build_applescript_respects_custom_sent_patterns(tmp_path: Path) -> None
     assert 'mail folders whose name contains "Sent"' not in script
 
 
-def test_build_applescript_passes_since_as_seconds(tmp_path: Path) -> None:
+def test_build_applescript_emits_days_units_for_whole_day_offset(tmp_path: Path) -> None:
     from datetime import datetime
 
     config = Config(vault_path=tmp_path)
     now = datetime(2026, 5, 29, 10, 0, 0).astimezone()
     since = datetime(2026, 5, 1, 10, 0, 0).astimezone()  # exactly 28 days before
     script = build_applescript(config, since=since, now=now)
-    # 28 days = 2419200 seconds. The script must pass the integer in and
-    # construct the date inside the Outlook tell block.
-    assert "set sinceSeconds to 2419200" in script
-    assert "(current date) - (sinceSeconds * seconds)" in script
+    # Must use `(N * days)` — Outlook for Mac rejects `(N * seconds)` in
+    # this context (variant probe V4/V6/V7 = ERROR).
+    assert "set sinceCut to ((current date) - (28 * days))" in script
+    assert "* seconds" not in script
     assert "makeDate" not in script
 
 
-def test_build_applescript_future_until_uses_negative_seconds(tmp_path: Path) -> None:
-    from datetime import datetime
+def test_build_applescript_mixed_units_for_partial_day(tmp_path: Path) -> None:
+    from datetime import datetime, timedelta
 
     config = Config(vault_path=tmp_path)
     now = datetime(2026, 5, 29, 10, 0, 0).astimezone()
-    until = datetime(2026, 5, 30, 10, 0, 0).astimezone()  # 1 day in the future
+    since = now - timedelta(days=2, hours=3, minutes=15)
+    script = build_applescript(config, since=since, now=now)
+    assert "(2 * days)" in script
+    assert "(3 * hours)" in script
+    assert "(15 * minutes)" in script
+
+
+def test_build_applescript_future_until_uses_plus(tmp_path: Path) -> None:
+    from datetime import datetime, timedelta
+
+    config = Config(vault_path=tmp_path)
+    now = datetime(2026, 5, 29, 10, 0, 0).astimezone()
+    until = now + timedelta(days=1)
     script = build_applescript(config, since=None, until=until, now=now)
-    # 1 day in the future from `now` = -86400 seconds offset.
-    assert "set untilSeconds to -86400" in script
+    assert "set untilCut to ((current date) + (1 * days))" in script
 
 
-def test_build_applescript_no_filter_passes_minus_one(tmp_path: Path) -> None:
+def test_build_applescript_no_filter_passes_missing_value(tmp_path: Path) -> None:
     config = Config(vault_path=tmp_path)
     script = build_applescript(config, since=None, until=None)
-    assert "set sinceSeconds to -1" in script
-    assert "set untilSeconds to -1" in script
+    assert "set sinceCut to missing value" in script
+    assert "set untilCut to missing value" in script

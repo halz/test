@@ -257,7 +257,7 @@ class AppleScriptOutlookClient(OutlookClientBase):
             recs = parse_messages(raw)
             lines.append("--- real-path probe (build_applescript, since 7 days) ---")
             since_line = next(
-                (ln for ln in script.splitlines() if "set sinceSeconds" in ln), "?"
+                (ln for ln in script.splitlines() if "set sinceCut" in ln), "?"
             )
             lines.append(f"generated: {since_line.strip()}")
             lines.append(
@@ -491,18 +491,32 @@ def build_client(config: Config, *, use_mock: bool = False) -> OutlookClientBase
 # --------------------------------------------------------------------------- #
 # AppleScript generation                                                      #
 # --------------------------------------------------------------------------- #
-def _seconds_offset(dt: datetime, now: datetime) -> int:
-    """Return signed seconds such that ``current date - offset == dt`` at ``now``.
+def _date_offset_expr(dt: datetime, now: datetime) -> str:
+    """Render ``dt`` as an AppleScript date expression relative to ``current date``.
 
-    A positive value means ``dt`` is in the past; negative means future. The
-    AppleScript side does ``(current date) - (offset * seconds)`` inside the
-    Outlook ``tell`` block — evaluating ``current date`` outside that block
-    silently broke the ``whose time received ≥ X`` clause (the value was the
-    correct moment but Outlook's filter rejected it). Passing only the integer
-    keeps the date construction inside the tell block, matching the form
-    proven to work by the doctor probe.
+    Outlook for Mac rejects ``(N * seconds)`` in the ``whose`` clause
+    context ("seconds のタイプを number に変換できません"), but accepts
+    ``(N * days)``, ``(N * hours)``, ``(N * minutes)`` (variant probe V1/V5).
+    Round to the nearest minute and emit only those units. The resulting
+    expression is built inside the Outlook ``tell`` block, then passed to
+    collectFolder as a date object (the form V5 proved working).
     """
-    return int((now - dt).total_seconds())
+    delta_secs = int((now - dt).total_seconds())
+    delta_mins = round(delta_secs / 60)
+    if delta_mins == 0:
+        return "(current date)"
+    sign = "-" if delta_mins > 0 else "+"
+    delta_mins = abs(delta_mins)
+    days, rem = divmod(delta_mins, 60 * 24)
+    hours, minutes = divmod(rem, 60)
+    parts: list[str] = []
+    if days:
+        parts.append(f"({days} * days)")
+    if hours:
+        parts.append(f"({hours} * hours)")
+    if minutes:
+        parts.append(f"({minutes} * minutes)")
+    return "((current date) " + sign + " " + (" " + sign + " ").join(parts) + ")"
 
 
 def build_applescript(
@@ -522,23 +536,26 @@ def build_applescript(
         now = datetime.now().astimezone()
     recurse = "true" if config.folders.include_subfolders else "false"
     excluded = ", ".join(f'"{e}"' for e in config.excluded_folders)
-    # -1 means "no bound" (no since / no until); positive = seconds-into-the-past.
-    since_seconds = _seconds_offset(since, now) if since else -1
-    until_seconds = _seconds_offset(until, now) if until else -1
+    since_expr = _date_offset_expr(since, now) if since else None
+    until_expr = _date_offset_expr(until, now) if until else None
 
-    # Build the run section. The Inbox is reached via the well-known `inbox`
-    # property; the Sent folder is found by name match (Outlook for Mac has no
-    # reliable `sent mail` keyword). Both are wrapped in `try` so an unsupported
-    # term degrades gracefully (that folder is skipped) instead of crashing.
-    run_lines = [
-        f"set sinceSeconds to {since_seconds}",
-        f"set untilSeconds to {until_seconds}",
-        'tell application "Microsoft Outlook"',
-    ]
+    # Build the run section. `sinceCut` / `untilCut` are date objects computed
+    # inside the Outlook tell block (the variant probe showed parameter-passed
+    # dates work — V5 — but not `(N * seconds)` arithmetic — V4/V6/V7). The
+    # Inbox is reached via the well-known `inbox` property; the Sent folder is
+    # found by name match. Both are wrapped in `try` so an unsupported term
+    # degrades gracefully (that folder is skipped) instead of crashing.
+    run_lines = ['tell application "Microsoft Outlook"']
+    run_lines.append(
+        f"  set sinceCut to {since_expr}" if since_expr else "  set sinceCut to missing value"
+    )
+    run_lines.append(
+        f"  set untilCut to {until_expr}" if until_expr else "  set untilCut to missing value"
+    )
     if config.folders.inbox:
         run_lines += [
             "  try",
-            f'    my collectFolder(inbox, "received", sinceSeconds, untilSeconds, {recurse})',
+            f'    my collectFolder(inbox, "received", sinceCut, untilCut, {recurse})',
             "  end try",
         ]
     if config.folders.sent:
@@ -547,7 +564,7 @@ def build_applescript(
             run_lines += [
                 "  try",
                 f'    repeat with sf in (mail folders whose name contains "{safe}")',
-                f'      my collectFolder(sf, "sent", sinceSeconds, untilSeconds, {recurse})',
+                f'      my collectFolder(sf, "sent", sinceCut, untilCut, {recurse})',
                 "    end repeat",
                 "  end try",
             ]
@@ -657,7 +674,7 @@ on joinAttachments(theAtts)
   return s
 end joinAttachments
 
-on collectFolder(theFolder, direction, sinceSeconds, untilSeconds, recurse)
+on collectFolder(theFolder, direction, sinceCut, untilCut, recurse)
   tell application "Microsoft Outlook"
     set folderName to ""
     try
@@ -665,20 +682,16 @@ on collectFolder(theFolder, direction, sinceSeconds, untilSeconds, recurse)
     end try
     if my isExcluded(folderName) then return
     set msgs to {{}}
-    -- `current date` is evaluated *inside* this Outlook tell block (mirrors
-    -- the working doctor probe form). Lower bound is the well-supported
-    -- `whose time received ≥ X`; the upper bound is enforced per-message
-    -- because compound `whose` clauses silently return an empty set.
+    -- `sinceCut` / `untilCut` are date objects built by the caller using
+    -- `(N * days)` / `(N * hours)` / `(N * minutes)` (the only multipliers
+    -- this Outlook AppleScript accepts in this context).
     try
-      if sinceSeconds < 0 then
+      if sinceCut is missing value then
         set msgs to (messages of theFolder)
       else
-        set sinceCut to (current date) - (sinceSeconds * seconds)
         set msgs to (messages of theFolder whose time received ≥ sinceCut)
       end if
     end try
-    set untilCut to missing value
-    if untilSeconds ≥ 0 then set untilCut to (current date) - (untilSeconds * seconds)
     repeat with m in msgs
       try
         set inWindow to true
@@ -692,7 +705,7 @@ on collectFolder(theFolder, direction, sinceSeconds, untilSeconds, recurse)
     if recurse then
       try
         repeat with sub in (mail folders of theFolder)
-          my collectFolder(sub, direction, sinceSeconds, untilSeconds, recurse)
+          my collectFolder(sub, direction, sinceCut, untilCut, recurse)
         end repeat
       end try
     end if
