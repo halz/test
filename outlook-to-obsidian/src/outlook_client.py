@@ -244,6 +244,30 @@ class AppleScriptOutlookClient(OutlookClientBase):
             lines.append(probe.rstrip("\n") or "(empty)")
         except OutlookClientError as exc:
             lines.append(f"date-filter probe failed: {exc}")
+
+        # Real-path probe: run the actual build_applescript query for the last
+        # 7 days and report how many records come back. This exercises the exact
+        # code sync uses (handlers, collectFolder, the since `whose` clause and
+        # per-message emit), isolating whether the failure is in the real path
+        # vs. the simplified date-filter probe above.
+        try:
+            from datetime import timedelta
+
+            now = datetime.now().astimezone()
+            since = now - timedelta(days=7)
+            script = build_applescript(self.config, since, None, now)
+            raw = self._run(script)
+            recs = parse_messages(raw)
+            lines.append("--- real-path probe (build_applescript, since 7 days) ---")
+            since_line = next(
+                (ln for ln in script.splitlines() if "set sinceDate" in ln), "?"
+            )
+            lines.append(f"generated: {since_line.strip()}")
+            lines.append(
+                f"AppleScript returned {len(raw)} bytes; parsed {len(recs)} record(s)"
+            )
+        except Exception as exc:  # noqa: BLE001
+            lines.append(f"real-path probe failed: {exc}")
         return "\n".join(lines)
 
     def _run(self, script: str) -> str:
