@@ -113,23 +113,33 @@ def test_build_applescript_respects_custom_sent_patterns(tmp_path: Path) -> None
     assert 'mail folders whose name contains "Sent"' not in script
 
 
-def test_build_applescript_uses_relative_current_date(tmp_path: Path) -> None:
+def test_build_applescript_passes_since_as_seconds(tmp_path: Path) -> None:
     from datetime import datetime
 
     config = Config(vault_path=tmp_path)
     now = datetime(2026, 5, 29, 10, 0, 0).astimezone()
     since = datetime(2026, 5, 1, 10, 0, 0).astimezone()  # exactly 28 days before
     script = build_applescript(config, since=since, now=now)
-    # 28 days = 2419200 seconds. Must use (current date) arithmetic, not makeDate.
-    assert "((current date) - 2419200)" in script
+    # 28 days = 2419200 seconds. The script must pass the integer in and
+    # construct the date inside the Outlook tell block.
+    assert "set sinceSeconds to 2419200" in script
+    assert "(current date) - (sinceSeconds * seconds)" in script
     assert "makeDate" not in script
 
 
-def test_build_applescript_future_date_uses_plus(tmp_path: Path) -> None:
+def test_build_applescript_future_until_uses_negative_seconds(tmp_path: Path) -> None:
     from datetime import datetime
 
     config = Config(vault_path=tmp_path)
     now = datetime(2026, 5, 29, 10, 0, 0).astimezone()
     until = datetime(2026, 5, 30, 10, 0, 0).astimezone()  # 1 day in the future
     script = build_applescript(config, since=None, until=until, now=now)
-    assert "((current date) + 86400)" in script
+    # 1 day in the future from `now` = -86400 seconds offset.
+    assert "set untilSeconds to -86400" in script
+
+
+def test_build_applescript_no_filter_passes_minus_one(tmp_path: Path) -> None:
+    config = Config(vault_path=tmp_path)
+    script = build_applescript(config, since=None, until=None)
+    assert "set sinceSeconds to -1" in script
+    assert "set untilSeconds to -1" in script
