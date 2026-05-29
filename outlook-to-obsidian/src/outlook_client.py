@@ -267,6 +267,18 @@ class AppleScriptOutlookClient(OutlookClientBase):
         except Exception as exc:  # noqa: BLE001
             lines.append(f"real-path probe failed: {exc}")
 
+        # Smoke probe: run a tiny self-contained emit-like script that mirrors
+        # the real sync path (whose clause + iteration + emit) but only writes
+        # the message id and reports counters via stderr-friendly return value.
+        # This is fast (no body fetch) and tells us conclusively whether emit
+        # is executing and reaching the `outText` assignment.
+        try:
+            smoke = self._run(_SMOKE_EMIT_PROBE)
+            lines.append("--- smoke emit probe (inbox, since 7 days) ---")
+            lines.append(smoke.rstrip("\n") or "(empty)")
+        except OutlookClientError as exc:
+            lines.append(f"smoke probe failed: {exc}")
+
         # Variant probe: which whose-clause idiom actually works in this
         # Outlook? Tries the inline-count form (known good), set-then-count,
         # every-message form, and routing through a handler with `theFolder`
@@ -347,6 +359,46 @@ tell application "Microsoft Outlook"
     end try
     return out
 end tell
+"""
+
+
+_SMOKE_EMIT_PROBE = """
+property smokeOut : ""
+property smokeCount : 0
+property smokeFirstError : ""
+
+on smokeEmit(theMsg)
+    tell application "Microsoft Outlook"
+        try
+            set theId to (id of theMsg) as text
+            set my smokeOut to (my smokeOut) & theId & ","
+            set my smokeCount to (my smokeCount) + 1
+        on error errMsg
+            if length of (my smokeFirstError) = 0 then set my smokeFirstError to "emit: " & errMsg
+        end try
+    end tell
+end smokeEmit
+
+tell application "Microsoft Outlook"
+    try
+        set sinceCut to (current date) - (7 * days)
+    on error errMsg
+        return "STAGE=date ERR=" & errMsg
+    end try
+    try
+        repeat with m in (messages of inbox whose time received ≥ sinceCut)
+            try
+                my smokeEmit(contents of m)
+            on error errMsg
+                if length of (my smokeFirstError) = 0 then set my smokeFirstError to "iter: " & errMsg
+            end try
+        end repeat
+    on error errMsg
+        if length of (my smokeFirstError) = 0 then set my smokeFirstError to "loop: " & errMsg
+    end try
+end tell
+
+return "STAGE=done count=" & (my smokeCount) & " out_len=" & (length of (my smokeOut)) & " firstError=" & (my smokeFirstError)
 """
 
 
@@ -764,26 +816,50 @@ end isExcluded
 
 on emit(theMsg, direction, folderName)
   tell application "Microsoft Outlook"
-    set theId to (id of theMsg) as text
-    set theSubject to (subject of theMsg)
-    if theSubject is missing value then set theSubject to ""
-    set theSender to sender of theMsg
+    set theId to ""
+    try
+      set theId to (id of theMsg) as text
+    end try
+    set theSubject to ""
+    try
+      set theSubject to (subject of theMsg)
+      if theSubject is missing value then set theSubject to ""
+    end try
     set sName to ""
     set sAddr to ""
-    if theSender is not missing value then
-      set sName to (name of theSender)
-      set sAddr to (address of theSender)
-    end if
-    set toStr to my recipients(to recipients of theMsg)
-    set ccStr to my recipients(cc recipients of theMsg)
-    set d to (time received of theMsg)
-    if d is missing value then set d to (time sent of theMsg)
-    -- `seconds of d` triggers "secondsのタイプをnumberに変換できません" on some
-    -- Outlook for Mac AppleScript dictionaries (same root cause that breaks
-    -- `(N * seconds)`). We don't need sub-minute precision in note frontmatter
-    -- anyway, so hardcode the seconds field to 0.
-    set dStr to ((year of d) as text) & "," & (((month of d) as integer) as text) & "," & ((day of d) as text) & "," & ((hours of d) as text) & "," & ((minutes of d) as text) & ",0"
-    set isRead to "false"
+    try
+      set theSender to sender of theMsg
+      if theSender is not missing value then
+        try
+          set sName to (name of theSender)
+        end try
+        try
+          set sAddr to (address of theSender)
+        end try
+      end if
+    end try
+    set toStr to ""
+    try
+      set toStr to my recipients(to recipients of theMsg)
+    end try
+    set ccStr to ""
+    try
+      set ccStr to my recipients(cc recipients of theMsg)
+    end try
+    -- Date: fall back to 1970-epoch if every read fails, so emit still
+    -- produces a row instead of aborting the whole message silently.
+    set dStr to "1970,1,1,0,0,0"
+    try
+      set d to (time received of theMsg)
+      if d is missing value then
+        try
+          set d to (time sent of theMsg)
+        end try
+      end if
+      if d is not missing value then
+        set dStr to ((year of d) as text) & "," & (((month of d) as integer) as text) & "," & ((day of d) as text) & "," & ((hours of d) as text) & "," & ((minutes of d) as text) & ",0"
+      end if
+    end try
     set cats to ""
     try
       set cats to my joinCategories(category of theMsg)
@@ -792,8 +868,10 @@ on emit(theMsg, direction, folderName)
     try
       set prio to (priority of theMsg) as text
     end try
-    set flagged to "false"
-    set atts to my joinAttachments(attachments of theMsg)
+    set atts to ""
+    try
+      set atts to my joinAttachments(attachments of theMsg)
+    end try
     set bodyText to ""
     try
       with timeout of 30 seconds
@@ -801,8 +879,11 @@ on emit(theMsg, direction, folderName)
       end timeout
     end try
     if bodyText is missing value then set bodyText to ""
-    set rec to direction & US & theId & US & theSubject & US & sName & US & sAddr & US & toStr & US & ccStr & US & dStr & US & isRead & US & cats & US & prio & US & flagged & US & atts & US & folderName & US & bodyText
-    set outText to outText & rec & RS
+    set rec to direction & US & theId & US & theSubject & US & sName & US & sAddr & US & toStr & US & ccStr & US & dStr & US & "false" & US & cats & US & prio & US & "false" & US & atts & US & folderName & US & bodyText
+    -- `outText` is a script-level property; `my outText` keeps the reference
+    -- explicit inside the Outlook tell-block (some dictionaries refuse to
+    -- fall back to script scope, dropping the assignment silently).
+    set my outText to (my outText) & rec & RS
   end tell
 end emit
 
