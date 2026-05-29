@@ -421,8 +421,45 @@ tell application "Microsoft Outlook"
         set out to out & "V7 ERROR: " & errMsg & linefeed
     end try
 
+    -- V8: param folder + set msgs + iterate (the original failing pattern).
+    try
+        set c to my probeSetThenIterate(inbox, cut7)
+        set out to out & "V8 param set+iterate: " & (c as text) & linefeed
+    on error errMsg
+        set out to out & "V8 ERROR: " & errMsg & linefeed
+    end try
+
+    -- V9: param folder + inline whose in repeat (the proposed fix).
+    try
+        set c to my probeInlineIterate(inbox, cut7)
+        set out to out & "V9 param inline-iterate: " & (c as text) & linefeed
+    on error errMsg
+        set out to out & "V9 ERROR: " & errMsg & linefeed
+    end try
+
     return out
 end tell
+
+on probeSetThenIterate(theFolder, sinceCut)
+    tell application "Microsoft Outlook"
+        set msgs to (messages of theFolder whose time received ≥ sinceCut)
+        set ct to 0
+        repeat with m in msgs
+            set ct to ct + 1
+        end repeat
+        return ct
+    end tell
+end probeSetThenIterate
+
+on probeInlineIterate(theFolder, sinceCut)
+    tell application "Microsoft Outlook"
+        set ct to 0
+        repeat with m in (messages of theFolder whose time received ≥ sinceCut)
+            set ct to ct + 1
+        end repeat
+        return ct
+    end tell
+end probeInlineIterate
 """
 
 
@@ -674,6 +711,19 @@ on joinAttachments(theAtts)
   return s
 end joinAttachments
 
+on emitInWindow(theMsg, direction, folderName, untilCut)
+  tell application "Microsoft Outlook"
+    set inWindow to true
+    if untilCut is not missing value then
+      try
+        set d to (time received of theMsg)
+        if d is not missing value and d ≥ untilCut then set inWindow to false
+      end try
+    end if
+    if inWindow then my emit(theMsg, direction, folderName)
+  end tell
+end emitInWindow
+
 on collectFolder(theFolder, direction, sinceCut, untilCut, recurse)
   tell application "Microsoft Outlook"
     set folderName to ""
@@ -681,27 +731,27 @@ on collectFolder(theFolder, direction, sinceCut, untilCut, recurse)
       set folderName to name of theFolder
     end try
     if my isExcluded(folderName) then return
-    set msgs to {{}}
-    -- `sinceCut` / `untilCut` are date objects built by the caller using
-    -- `(N * days)` / `(N * hours)` / `(N * minutes)` (the only multipliers
-    -- this Outlook AppleScript accepts in this context).
-    try
-      if sinceCut is missing value then
-        set msgs to (messages of theFolder)
-      else
-        set msgs to (messages of theFolder whose time received ≥ sinceCut)
-      end if
-    end try
-    repeat with m in msgs
+    -- The whose-clause result is iterated inline; assigning it to a variable
+    -- first silently drops the reference when `theFolder` is a parameter
+    -- (the V5 probe counted inline and worked; the prior set+repeat form did
+    -- not, see "set+iterate (param folder)" probe).
+    if sinceCut is missing value then
       try
-        set inWindow to true
-        if untilCut is not missing value then
-          set d to (time received of m)
-          if d is not missing value and d ≥ untilCut then set inWindow to false
-        end if
-        if inWindow then my emit(m, direction, folderName)
+        repeat with m in (messages of theFolder)
+          try
+            my emitInWindow(m, direction, folderName, untilCut)
+          end try
+        end repeat
       end try
-    end repeat
+    else
+      try
+        repeat with m in (messages of theFolder whose time received ≥ sinceCut)
+          try
+            my emitInWindow(m, direction, folderName, untilCut)
+          end try
+        end repeat
+      end try
+    end if
     if recurse then
       try
         repeat with sub in (mail folders of theFolder)
