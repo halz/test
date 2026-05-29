@@ -245,17 +245,18 @@ class AppleScriptOutlookClient(OutlookClientBase):
         except OutlookClientError as exc:
             lines.append(f"date-filter probe failed: {exc}")
 
-        # Real-path probe: run the actual build_applescript query for the last
-        # 7 days and report how many records come back.
+        # Real-path probe: run the actual build_applescript query for a tiny
+        # 1-hour window so we exercise the full handler / collectFolder / emit
+        # chain without paying the cost of fetching hundreds of message bodies.
         try:
             from datetime import timedelta
 
             now = datetime.now().astimezone()
-            since = now - timedelta(days=7)
+            since = now - timedelta(hours=1)
             script = build_applescript(self.config, since, None, now)
             raw = self._run(script)
             recs = parse_messages(raw)
-            lines.append("--- real-path probe (build_applescript, since 7 days) ---")
+            lines.append("--- real-path probe (build_applescript, since 1 hour) ---")
             since_line = next(
                 (ln for ln in script.splitlines() if "set sinceCut" in ln), "?"
             )
