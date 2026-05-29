@@ -233,6 +233,17 @@ class AppleScriptOutlookClient(OutlookClientBase):
         )
         lines.append("--- top-level mail folders (name | direct message count) ---")
         lines.append(raw.rstrip("\n") or "(empty)")
+
+        # Date-filter probe: does `whose time received ≥ <date>` actually work
+        # on this Outlook? Compares total inbox count against filtered counts
+        # for 30/365 days ago. If totals are large but filtered are 0, the
+        # whose-clause date filter is broken on this version.
+        try:
+            probe = self._run(_DATE_FILTER_PROBE)
+            lines.append("--- date-filter probe (inbox) ---")
+            lines.append(probe.rstrip("\n") or "(empty)")
+        except OutlookClientError as exc:
+            lines.append(f"date-filter probe failed: {exc}")
         return "\n".join(lines)
 
     def _run(self, script: str) -> str:
@@ -258,6 +269,52 @@ class AppleScriptOutlookClient(OutlookClientBase):
 
 class OutlookClientError(RuntimeError):
     """Raised when the Outlook backend cannot be reached or scripted."""
+
+
+# Probes whether `whose time received ≥ <date>` filtering works at all.
+# Builds the cutoff dates with the same `current date` minus N days approach,
+# which sidesteps any makeDate construction issue and isolates the whose clause.
+_DATE_FILTER_PROBE = """
+tell application "Microsoft Outlook"
+    set out to ""
+    set total to -1
+    try
+        set total to count of messages of inbox
+    end try
+    set out to out & "inbox total: " & (total as text) & linefeed
+
+    set cut30 to (current date) - (30 * days)
+    set cut365 to (current date) - (365 * days)
+
+    set c30 to -1
+    try
+        set c30 to count of (messages of inbox whose time received ≥ cut30)
+    on error errMsg
+        set out to out & "whose ≥ 30d ERROR: " & errMsg & linefeed
+    end try
+    set out to out & "whose time received ≥ 30 days ago: " & (c30 as text) & linefeed
+
+    set c365 to -1
+    try
+        set c365 to count of (messages of inbox whose time received ≥ cut365)
+    on error errMsg
+        set out to out & "whose ≥ 365d ERROR: " & errMsg & linefeed
+    end try
+    set out to out & "whose time received ≥ 365 days ago: " & (c365 as text) & linefeed
+
+    -- Newest message's received date, as a sanity check on what dates exist.
+    try
+        set msgs to messages of inbox
+        if (count of msgs) > 0 then
+            set newest to time received of (item 1 of msgs)
+            set out to out & "first message time received: " & (newest as text) & linefeed
+        end if
+    on error errMsg
+        set out to out & "newest probe ERROR: " & errMsg & linefeed
+    end try
+    return out
+end tell
+"""
 
 
 def _build_diagnose_script(sent_patterns: list[str]) -> str:
