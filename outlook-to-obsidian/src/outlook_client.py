@@ -296,8 +296,8 @@ class OutlookClientError(RuntimeError):
 
 
 # Probes whether `whose time received ≥ <date>` filtering works at all.
-# Builds the cutoff dates with the same `current date` minus N days approach,
-# which sidesteps any makeDate construction issue and isolates the whose clause.
+# Builds the cutoff dates with the same `current date` minus N days approach
+# used by the real query, isolating the whose clause.
 _DATE_FILTER_PROBE = """
 tell application "Microsoft Outlook"
     set out to ""
@@ -409,11 +409,11 @@ def build_client(config: Config, *, use_mock: bool = False) -> OutlookClientBase
 def _applescript_date(dt: datetime, now: datetime) -> str:
     """Render an AppleScript date expression relative to ``current date``.
 
-    Building dates by mutating ``current date`` field-by-field (the old
-    ``makeDate`` handler) silently produced values that broke the ``whose
-    time received ≥ X`` clause on some Outlook for Mac versions. Offsetting
-    from ``current date`` by a fixed number of seconds is the form proven to
-    work by the doctor date-filter probe.
+    Building dates by mutating ``current date`` field-by-field silently
+    produced values that broke the ``whose time received ≥ X`` clause on some
+    Outlook for Mac versions. Offsetting from ``current date`` by a fixed
+    number of seconds is the form proven to work by the doctor date-filter
+    probe.
     """
     delta = int((now - dt).total_seconds())
     if delta >= 0:
