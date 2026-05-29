@@ -246,10 +246,7 @@ class AppleScriptOutlookClient(OutlookClientBase):
             lines.append(f"date-filter probe failed: {exc}")
 
         # Real-path probe: run the actual build_applescript query for the last
-        # 7 days and report how many records come back. This exercises the exact
-        # code sync uses (handlers, collectFolder, the since `whose` clause and
-        # per-message emit), isolating whether the failure is in the real path
-        # vs. the simplified date-filter probe above.
+        # 7 days and report how many records come back.
         try:
             from datetime import timedelta
 
@@ -268,6 +265,17 @@ class AppleScriptOutlookClient(OutlookClientBase):
             )
         except Exception as exc:  # noqa: BLE001
             lines.append(f"real-path probe failed: {exc}")
+
+        # Variant probe: which whose-clause idiom actually works in this
+        # Outlook? Tries the inline-count form (known good), set-then-count,
+        # every-message form, and routing through a handler with `theFolder`
+        # as a parameter (what collectFolder does).
+        try:
+            variants = self._run(_VARIANT_PROBE)
+            lines.append("--- variant probe (which whose-form works) ---")
+            lines.append(variants.rstrip("\n") or "(empty)")
+        except OutlookClientError as exc:
+            lines.append(f"variant probe failed: {exc}")
         return "\n".join(lines)
 
     def _run(self, script: str) -> str:
@@ -336,6 +344,83 @@ tell application "Microsoft Outlook"
     on error errMsg
         set out to out & "newest probe ERROR: " & errMsg & linefeed
     end try
+    return out
+end tell
+"""
+
+
+_VARIANT_PROBE = """
+on probeFolderWithDate(theFolder, sinceCut)
+    tell application "Microsoft Outlook"
+        return count of (messages of theFolder whose time received ≥ sinceCut)
+    end tell
+end probeFolderWithDate
+
+on probeFolderWithSeconds(theFolder, secs)
+    tell application "Microsoft Outlook"
+        set cut to (current date) - (secs * seconds)
+        return count of (messages of theFolder whose time received ≥ cut)
+    end tell
+end probeFolderWithSeconds
+
+tell application "Microsoft Outlook"
+    set out to ""
+    set cut7 to (current date) - (7 * days)
+
+    try
+        set c to count of (messages of inbox whose time received ≥ cut7)
+        set out to out & "V1 count-inline (inbox, 7*days): " & (c as text) & linefeed
+    on error errMsg
+        set out to out & "V1 ERROR: " & errMsg & linefeed
+    end try
+
+    try
+        set msgs to (messages of inbox whose time received ≥ cut7)
+        set out to out & "V2 set-then-count: " & ((count of msgs) as text) & linefeed
+    on error errMsg
+        set out to out & "V2 ERROR: " & errMsg & linefeed
+    end try
+
+    try
+        set msgs to (every message of inbox whose time received ≥ cut7)
+        set out to out & "V3 every-message: " & ((count of msgs) as text) & linefeed
+    on error errMsg
+        set out to out & "V3 ERROR: " & errMsg & linefeed
+    end try
+
+    try
+        set cut7s to (current date) - (604800 * seconds)
+        set c to count of (messages of inbox whose time received ≥ cut7s)
+        set out to out & "V4 inline (N*seconds): " & (c as text) & linefeed
+    on error errMsg
+        set out to out & "V4 ERROR: " & errMsg & linefeed
+    end try
+
+    try
+        set c to my probeFolderWithDate(inbox, cut7)
+        set out to out & "V5 handler(folder, date): " & (c as text) & linefeed
+    on error errMsg
+        set out to out & "V5 ERROR: " & errMsg & linefeed
+    end try
+
+    try
+        set c to my probeFolderWithSeconds(inbox, 604800)
+        set out to out & "V6 handler(folder, seconds): " & (c as text) & linefeed
+    on error errMsg
+        set out to out & "V6 ERROR: " & errMsg & linefeed
+    end try
+
+    -- The exact form the current build_applescript uses inside collectFolder,
+    -- but inlined here (folder is `inbox` directly, not via parameter).
+    try
+        set sinceSeconds to 604800
+        set sinceCut to (current date) - (sinceSeconds * seconds)
+        set msgs to (messages of inbox whose time received ≥ sinceCut)
+        set out to out & "V7 collectFolder-shape: " & ((count of msgs) as text) & linefeed
+    on error errMsg
+        set out to out & "V7 ERROR: " & errMsg & linefeed
+    end try
+
     return out
 end tell
 """
