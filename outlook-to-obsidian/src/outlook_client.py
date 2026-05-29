@@ -437,6 +437,22 @@ tell application "Microsoft Outlook"
         set out to out & "V9 ERROR: " & errMsg & linefeed
     end try
 
+    -- V10: like V9 but try to read `id of m` (a property) from each item.
+    try
+        set c to my probeReadIdRef(inbox, cut7)
+        set out to out & "V10 read id of (m ref): " & (c as text) & linefeed
+    on error errMsg
+        set out to out & "V10 ERROR: " & errMsg & linefeed
+    end try
+
+    -- V11: same as V10 but dereference via `contents of m` first.
+    try
+        set c to my probeReadIdContents(inbox, cut7)
+        set out to out & "V11 read id of (contents of m): " & (c as text) & linefeed
+    on error errMsg
+        set out to out & "V11 ERROR: " & errMsg & linefeed
+    end try
+
     return out
 end tell
 
@@ -460,6 +476,33 @@ on probeInlineIterate(theFolder, sinceCut)
         return ct
     end tell
 end probeInlineIterate
+
+on probeReadIdRef(theFolder, sinceCut)
+    tell application "Microsoft Outlook"
+        set ct to 0
+        repeat with m in (messages of theFolder whose time received ≥ sinceCut)
+            try
+                set _id to (id of m) as text
+                set ct to ct + 1
+            end try
+        end repeat
+        return ct
+    end tell
+end probeReadIdRef
+
+on probeReadIdContents(theFolder, sinceCut)
+    tell application "Microsoft Outlook"
+        set ct to 0
+        repeat with m in (messages of theFolder whose time received ≥ sinceCut)
+            try
+                set theMsg to contents of m
+                set _id to (id of theMsg) as text
+                set ct to ct + 1
+            end try
+        end repeat
+        return ct
+    end tell
+end probeReadIdContents
 """
 
 
@@ -739,7 +782,7 @@ on collectFolder(theFolder, direction, sinceCut, untilCut, recurse)
       try
         repeat with m in (messages of theFolder)
           try
-            my emitInWindow(m, direction, folderName, untilCut)
+            my emitInWindow(contents of m, direction, folderName, untilCut)
           end try
         end repeat
       end try
@@ -747,7 +790,7 @@ on collectFolder(theFolder, direction, sinceCut, untilCut, recurse)
       try
         repeat with m in (messages of theFolder whose time received ≥ sinceCut)
           try
-            my emitInWindow(m, direction, folderName, untilCut)
+            my emitInWindow(contents of m, direction, folderName, untilCut)
           end try
         end repeat
       end try
