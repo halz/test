@@ -454,6 +454,16 @@ tell application "Microsoft Outlook"
         set out to out & "V11 ERROR: " & errMsg & linefeed
     end try
 
+    -- V12: walk the first matched message through every property emit reads.
+    -- Returns the first failure (if any) so we know exactly which property
+    -- access aborts emit silently.
+    try
+        set r to my probeEmitMimic(inbox, cut7)
+        set out to out & "V12 emit-mimic first msg: " & r & linefeed
+    on error errMsg
+        set out to out & "V12 ERROR: " & errMsg & linefeed
+    end try
+
     return out
 end tell
 
@@ -504,6 +514,76 @@ on probeReadIdContents(theFolder, sinceCut)
         return ct
     end tell
 end probeReadIdContents
+
+on probeEmitMimic(theFolder, sinceCut)
+    tell application "Microsoft Outlook"
+        repeat with m in (messages of theFolder whose time received ≥ sinceCut)
+            set theMsg to contents of m
+            try
+                set _x to (id of theMsg) as text
+            on error errMsg
+                return "ERR id: " & errMsg
+            end try
+            try
+                set _x to (subject of theMsg)
+            on error errMsg
+                return "ERR subject: " & errMsg
+            end try
+            try
+                set _x to sender of theMsg
+            on error errMsg
+                return "ERR sender: " & errMsg
+            end try
+            try
+                set _x to to recipients of theMsg
+            on error errMsg
+                return "ERR to recipients: " & errMsg
+            end try
+            try
+                set _d to (time received of theMsg)
+            on error errMsg
+                return "ERR time received: " & errMsg
+            end try
+            try
+                set _x to (year of _d) as text
+            on error errMsg
+                return "ERR year of d: " & errMsg
+            end try
+            try
+                set _x to (month of _d) as integer
+            on error errMsg
+                return "ERR month of d: " & errMsg
+            end try
+            try
+                set _x to (day of _d) as text
+            on error errMsg
+                return "ERR day of d: " & errMsg
+            end try
+            try
+                set _x to (hours of _d) as text
+            on error errMsg
+                return "ERR hours of d: " & errMsg
+            end try
+            try
+                set _x to (minutes of _d) as text
+            on error errMsg
+                return "ERR minutes of d: " & errMsg
+            end try
+            try
+                set _x to (seconds of _d) as text
+            on error errMsg
+                return "ERR seconds of d: " & errMsg
+            end try
+            try
+                set _x to (content of theMsg)
+            on error errMsg
+                return "ERR content: " & errMsg
+            end try
+            return "OK first msg passes all reads"
+        end repeat
+        return "no messages match"
+    end tell
+end probeEmitMimic
 """
 
 
@@ -681,7 +761,11 @@ on emit(theMsg, direction, folderName)
     set ccStr to my recipients(cc recipients of theMsg)
     set d to (time received of theMsg)
     if d is missing value then set d to (time sent of theMsg)
-    set dStr to ((year of d) as text) & "," & (((month of d) as integer) as text) & "," & ((day of d) as text) & "," & ((hours of d) as text) & "," & ((minutes of d) as text) & "," & ((seconds of d) as text)
+    -- `seconds of d` triggers "secondsのタイプをnumberに変換できません" on some
+    -- Outlook for Mac AppleScript dictionaries (same root cause that breaks
+    -- `(N * seconds)`). We don't need sub-minute precision in note frontmatter
+    -- anyway, so hardcode the seconds field to 0.
+    set dStr to ((year of d) as text) & "," & (((month of d) as integer) as text) & "," & ((day of d) as text) & "," & ((hours of d) as text) & "," & ((minutes of d) as text) & ",0"
     set isRead to "false"
     set cats to ""
     try

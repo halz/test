@@ -123,7 +123,12 @@ def test_build_applescript_emits_days_units_for_whole_day_offset(tmp_path: Path)
     # Must use `(N * days)` — Outlook for Mac rejects `(N * seconds)` in
     # this context (variant probe V4/V6/V7 = ERROR).
     assert "set sinceCut to ((current date) - (28 * days))" in script
-    assert "* seconds" not in script
+    # No `(N * seconds)` multiplier (Outlook for Mac rejects it). Exclude
+    # comment lines from the check — the comment about the bug mentions it.
+    code_only = "\n".join(
+        ln for ln in script.splitlines() if not ln.lstrip().startswith("--")
+    )
+    assert "* seconds" not in code_only
     assert "makeDate" not in script
 
 
