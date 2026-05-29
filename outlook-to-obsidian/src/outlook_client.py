@@ -382,19 +382,26 @@ def build_client(config: Config, *, use_mock: bool = False) -> OutlookClientBase
 # --------------------------------------------------------------------------- #
 # AppleScript generation                                                      #
 # --------------------------------------------------------------------------- #
-def _applescript_date(dt: datetime) -> str:
-    """Render an AppleScript expression building a `date` for ``dt``."""
-    return (
-        'my makeDate({y}, {mo}, {d}, {h}, {mi}, {s})'.format(
-            y=dt.year, mo=dt.month, d=dt.day, h=dt.hour, mi=dt.minute, s=dt.second
-        )
-    )
+def _applescript_date(dt: datetime, now: datetime) -> str:
+    """Render an AppleScript date expression relative to ``current date``.
+
+    Building dates by mutating ``current date`` field-by-field (the old
+    ``makeDate`` handler) silently produced values that broke the ``whose
+    time received ≥ X`` clause on some Outlook for Mac versions. Offsetting
+    from ``current date`` by a fixed number of seconds is the form proven to
+    work by the doctor date-filter probe.
+    """
+    delta = int((now - dt).total_seconds())
+    if delta >= 0:
+        return f"((current date) - {delta})"
+    return f"((current date) + {-delta})"
 
 
 def build_applescript(
     config: Config,
     since: datetime | None,
     until: datetime | None = None,
+    now: datetime | None = None,
 ) -> str:
     """Generate the AppleScript that dumps messages as a delimited stream.
 
@@ -403,10 +410,12 @@ def build_applescript(
     per message terminated by RS. Messages are filtered to the half-open window
     ``[since, until)`` if either bound is supplied.
     """
+    if now is None:
+        now = datetime.now().astimezone()
     recurse = "true" if config.folders.include_subfolders else "false"
     excluded = ", ".join(f'"{e}"' for e in config.excluded_folders)
-    since_expr = _applescript_date(since) if since else "missing value"
-    until_expr = _applescript_date(until) if until else "missing value"
+    since_expr = _applescript_date(since, now) if since else "missing value"
+    until_expr = _applescript_date(until, now) if until else "missing value"
 
     # Build the run section. The Inbox is reached via the well-known `inbox`
     # property; the Sent folder is found by name match (Outlook for Mac has no
@@ -441,17 +450,6 @@ property RS : (ASCII character 30)
 property US : (ASCII character 31)
 property excluded : {{{excluded}}}
 property outText : ""
-
-on makeDate(y, mo, d, h, mi, s)
-  set theDate to current date
-  set year of theDate to y
-  set month of theDate to mo
-  set day of theDate to d
-  set hours of theDate to h
-  set minutes of theDate to mi
-  set seconds of theDate to s
-  return theDate
-end makeDate
 
 on isExcluded(folderName)
   repeat with e in excluded

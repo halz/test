@@ -111,3 +111,25 @@ def test_build_applescript_respects_custom_sent_patterns(tmp_path: Path) -> None
     assert 'mail folders whose name contains "Gesendet"' in script
     assert 'mail folders whose name contains "Enviado"' in script
     assert 'mail folders whose name contains "Sent"' not in script
+
+
+def test_build_applescript_uses_relative_current_date(tmp_path: Path) -> None:
+    from datetime import datetime
+
+    config = Config(vault_path=tmp_path)
+    now = datetime(2026, 5, 29, 10, 0, 0).astimezone()
+    since = datetime(2026, 5, 1, 10, 0, 0).astimezone()  # exactly 28 days before
+    script = build_applescript(config, since=since, now=now)
+    # 28 days = 2419200 seconds. Must use (current date) arithmetic, not makeDate.
+    assert "((current date) - 2419200)" in script
+    assert "makeDate" not in script
+
+
+def test_build_applescript_future_date_uses_plus(tmp_path: Path) -> None:
+    from datetime import datetime
+
+    config = Config(vault_path=tmp_path)
+    now = datetime(2026, 5, 29, 10, 0, 0).astimezone()
+    until = datetime(2026, 5, 30, 10, 0, 0).astimezone()  # 1 day in the future
+    script = build_applescript(config, since=None, until=until, now=now)
+    assert "((current date) + 86400)" in script
