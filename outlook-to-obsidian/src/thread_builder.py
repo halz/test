@@ -98,7 +98,18 @@ def _load_thread_msg(vault_path: Path, note_rel_path: str) -> _ThreadMsg | None:
     if not note_path.exists():
         logger.warning("Thread member note missing: %s", note_rel_path)
         return None
-    front, body = read_note(note_path)
+    try:
+        front, body = read_note(note_path)
+    except yaml.YAMLError as exc:
+        # Tolerate notes whose frontmatter is malformed (e.g. truncated from
+        # an interrupted write). Skipping lets the rest of the rebuild
+        # succeed; the user can `sync` again to overwrite the broken note.
+        logger.warning(
+            "Skipping note with malformed frontmatter: %s — %s",
+            note_rel_path,
+            exc,
+        )
+        return None
     try:
         when = date_parser.isoparse(str(front.get("date")))
     except (ValueError, TypeError):

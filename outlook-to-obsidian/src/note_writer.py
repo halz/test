@@ -143,8 +143,16 @@ def build_message_note(
 
 
 def write_note(path: Path, content: str) -> None:
-    """Write ``content`` to ``path`` (UTF-8), creating parent directories."""
+    """Write ``content`` to ``path`` atomically (write to .tmp + rename).
+
+    The atomic-rename guarantees the file is either the previous version or
+    fully the new version — never half-written. Without this, a process
+    killed mid-write (e.g. a backfill timeout) leaves broken frontmatter
+    that crashes downstream readers (yaml.safe_load on truncated quotes).
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     if not content.endswith("\n"):
         content += "\n"
-    path.write_text(content, encoding="utf-8")
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(content, encoding="utf-8")
+    os.replace(tmp, path)
