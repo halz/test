@@ -320,6 +320,38 @@ def cmd_import_eml(args: argparse.Namespace, config: Config) -> int:
     return 0
 
 
+def cmd_import_olm(args: argparse.Namespace, config: Config) -> int:
+    from . import olm_importer
+
+    olm_path = Path(args.olm)
+    if not olm_path.exists():
+        print(f"ERROR: file not found: {olm_path}", file=sys.stderr)
+        return 1
+    print(f"Reading {olm_path} ...", flush=True)
+    records = list(olm_importer.iter_messages_from_olm(olm_path))
+    print(f"Parsed {len(records)} message(s) from .olm")
+    if not records:
+        return 0
+    client = olm_importer.OlmClient(records)
+    try:
+        summary = run_sync(
+            config,
+            client=client,
+            since=_parse_since(args.since),
+            dry_run=args.dry_run,
+        )
+    except (FileNotFoundError, OutlookClientError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    prefix = "[dry-run] " if summary["dry_run"] else ""
+    print(
+        f"{prefix}added={summary['messages_added']} "
+        f"skipped={summary['messages_skipped']} "
+        f"threads_rebuilt={summary['threads_rebuilt']}"
+    )
+    return 0
+
+
 def cmd_rebuild_threads(args: argparse.Namespace, config: Config) -> int:
     if not config.vault_path.exists():
         print(f"ERROR: Vault path does not exist: {config.vault_path}", file=sys.stderr)
@@ -497,6 +529,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true", help="Count only; don't write notes"
     )
     p_eml.set_defaults(func=cmd_import_eml)
+
+    p_olm = sub.add_parser(
+        "import-olm",
+        help="Import emails from an Outlook for Mac .olm archive",
+    )
+    p_olm.add_argument("olm", help="Path to the .olm archive")
+    p_olm.add_argument("--since", help="Only messages on/after this date (YYYY-MM-DD)")
+    p_olm.add_argument(
+        "--dry-run", action="store_true", help="Count only; don't write notes"
+    )
+    p_olm.set_defaults(func=cmd_import_olm)
 
     p_rebuild = sub.add_parser("rebuild-threads", help="Regenerate thread notes only")
     p_rebuild.set_defaults(func=cmd_rebuild_threads)

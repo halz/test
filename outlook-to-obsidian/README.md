@@ -119,6 +119,9 @@ python -m src.main sync --full --mock --dry-run
 python -m src.main import-eml ~/Documents/Outlook-Export/
 python -m src.main import-eml ~/Exported/Inbox/ --direction received --folder "Inbox"
 
+# Outlook for Mac の .olm（File → Export... で1ファイルにまとまる）からも取り込める
+python -m src.main import-olm ~/Documents/outlook-archive.olm
+
 # スレッドノートのみ再生成
 python -m src.main rebuild-threads
 
