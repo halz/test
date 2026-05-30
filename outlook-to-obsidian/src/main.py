@@ -302,9 +302,12 @@ def cmd_import_eml(args: argparse.Namespace, config: Config) -> int:
         return 0
     client = eml_importer.EmlClient(records)
     try:
+        # full=True because one-shot archive imports must not be filtered by
+        # the prior sync's timestamp — the user explicitly chose the source.
         summary = run_sync(
             config,
             client=client,
+            full=True,
             since=_parse_since(args.since),
             dry_run=args.dry_run,
         )
@@ -334,9 +337,12 @@ def cmd_import_olm(args: argparse.Namespace, config: Config) -> int:
         return 0
     client = olm_importer.OlmClient(records)
     try:
+        # full=True: see cmd_import_eml — archive imports ignore the prior
+        # incremental-sync timestamp so all messages in the archive flow through.
         summary = run_sync(
             config,
             client=client,
+            full=True,
             since=_parse_since(args.since),
             dry_run=args.dry_run,
         )
