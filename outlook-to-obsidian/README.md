@@ -112,6 +112,13 @@ python -m src.main backfill --plan                   # 計画だけ表示
 # Outlook 不要のサンプルデータで動作確認（パイプライン検証用）
 python -m src.main sync --full --mock --dry-run
 
+# ローカル .eml ファイルから取り込み（Outlook / AppleScript 不要）
+# Outlook for Mac でメッセージを Finder にドラッグ&ドロップして .eml を作り、
+# そのディレクトリを指定すれば本文ごと一括取り込み。AppleScript の本文取得が
+# 遅いケース（オフラインキャッシュ未完了など）で特に有効。
+python -m src.main import-eml ~/Documents/Outlook-Export/
+python -m src.main import-eml ~/Exported/Inbox/ --direction received --folder "Inbox"
+
 # スレッドノートのみ再生成
 python -m src.main rebuild-threads
 

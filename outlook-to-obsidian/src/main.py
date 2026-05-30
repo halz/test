@@ -32,7 +32,7 @@ from .note_writer import (
     unique_path,
     write_note,
 )
-from .outlook_client import OutlookClientError, build_client
+from .outlook_client import OutlookClientBase, OutlookClientError, build_client
 from .sync_state import SyncState
 from .thread_builder import rebuild_threads, thread_id_from_conversation
 from .utils import iso8601, setup_logging, sha256_text
@@ -76,6 +76,7 @@ def run_sync(
     until: datetime | None = None,
     use_mock: bool = False,
     skip_body: bool = False,
+    client: OutlookClientBase | None = None,
 ) -> dict[str, Any]:
     """Execute a sync and return a summary dict."""
     if not dry_run and not config.vault_path.exists():
@@ -88,11 +89,12 @@ def run_sync(
     run_id = state.start_run()
 
     try:
-        client = build_client(config, use_mock=use_mock)
-        if not use_mock and not client.is_available():
-            raise OutlookClientError(
-                "Microsoft Outlook is not running or not scriptable (macOS + Outlook required)"
-            )
+        if client is None:
+            client = build_client(config, use_mock=use_mock)
+            if not use_mock and not client.is_available():
+                raise OutlookClientError(
+                    "Microsoft Outlook is not running or not scriptable (macOS + Outlook required)"
+                )
 
         since_filter = _determine_since(state, config, full=full, since=since)
         logger.info(
@@ -285,6 +287,39 @@ def cmd_backfill(args: argparse.Namespace, config: Config) -> int:
     return 0
 
 
+def cmd_import_eml(args: argparse.Namespace, config: Config) -> int:
+    from . import eml_importer
+
+    paths = [Path(p) for p in args.paths]
+    print(f"Scanning {len(paths)} path(s) for .eml files...", flush=True)
+    records = list(
+        eml_importer.parse_eml_paths(
+            paths, direction=args.direction, folder=args.folder
+        )
+    )
+    print(f"Parsed {len(records)} EML file(s)")
+    if not records:
+        return 0
+    client = eml_importer.EmlClient(records)
+    try:
+        summary = run_sync(
+            config,
+            client=client,
+            since=_parse_since(args.since),
+            dry_run=args.dry_run,
+        )
+    except (FileNotFoundError, OutlookClientError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    prefix = "[dry-run] " if summary["dry_run"] else ""
+    print(
+        f"{prefix}added={summary['messages_added']} "
+        f"skipped={summary['messages_skipped']} "
+        f"threads_rebuilt={summary['threads_rebuilt']}"
+    )
+    return 0
+
+
 def cmd_rebuild_threads(args: argparse.Namespace, config: Config) -> int:
     if not config.vault_path.exists():
         print(f"ERROR: Vault path does not exist: {config.vault_path}", file=sys.stderr)
@@ -438,6 +473,30 @@ def build_parser() -> argparse.ArgumentParser:
         "isn't locally cached. Re-run sync later to fill bodies in.",
     )
     p_backfill.set_defaults(func=cmd_backfill)
+
+    p_eml = sub.add_parser(
+        "import-eml",
+        help="Import emails from local .eml files (no Outlook / AppleScript)",
+    )
+    p_eml.add_argument(
+        "paths",
+        nargs="+",
+        help="Files or directories to scan for .eml (directories are recursive)",
+    )
+    p_eml.add_argument(
+        "--direction",
+        default="auto",
+        choices=["auto", "received", "sent"],
+        help="Default direction (auto = infer per file from parent dir name)",
+    )
+    p_eml.add_argument(
+        "--folder", help="Folder name to record (default: parent directory name)"
+    )
+    p_eml.add_argument("--since", help="Only EMLs on/after this date (YYYY-MM-DD)")
+    p_eml.add_argument(
+        "--dry-run", action="store_true", help="Count only; don't write notes"
+    )
+    p_eml.set_defaults(func=cmd_import_eml)
 
     p_rebuild = sub.add_parser("rebuild-threads", help="Regenerate thread notes only")
     p_rebuild.set_defaults(func=cmd_rebuild_threads)
