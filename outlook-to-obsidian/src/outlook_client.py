@@ -133,10 +133,13 @@ class OutlookClientBase(ABC):
         self,
         since: datetime | None = None,
         until: datetime | None = None,
+        skip_body: bool = False,
     ) -> Iterator[MessageRecord]:
         """Yield messages received in the half-open window ``[since, until)``.
 
-        Either bound may be ``None`` to disable that side.
+        Either bound may be ``None`` to disable that side. When ``skip_body`` is
+        true, the body is left empty — used during backfill to avoid the
+        per-message server round-trip for uncached bodies.
         """
 
     @abstractmethod
@@ -157,12 +160,18 @@ class MockOutlookClient(OutlookClientBase):
         self,
         since: datetime | None = None,
         until: datetime | None = None,
+        skip_body: bool = False,
     ) -> Iterator[MessageRecord]:
         for record in self._records:
             if since is not None and record.date < since:
                 continue
             if until is not None and record.date >= until:
                 continue
+            if skip_body:
+                # Mirror the AppleScript behaviour for tests.
+                record = MessageRecord(
+                    **{**record.__dict__, "body_html": None, "body_plain": ""}
+                )
             yield record
 
     def diagnose(self) -> str:
@@ -193,13 +202,15 @@ class AppleScriptOutlookClient(OutlookClientBase):
         self,
         since: datetime | None = None,
         until: datetime | None = None,
+        skip_body: bool = False,
     ) -> Iterator[MessageRecord]:
-        script = build_applescript(self.config, since, until)
+        script = build_applescript(self.config, since, until, skip_body=skip_body)
         raw = self._run(script)
         logger.info(
-            "AppleScript output: %d bytes, %d record-separator(s)",
+            "AppleScript output: %d bytes, %d record-separator(s) (skip_body=%s)",
             len(raw),
             raw.count(RS),
+            skip_body,
         )
         records = parse_messages(raw)
         logger.info("Parsed %d MessageRecord(s) from AppleScript output", len(records))
@@ -754,6 +765,7 @@ def build_applescript(
     since: datetime | None,
     until: datetime | None = None,
     now: datetime | None = None,
+    skip_body: bool = False,
 ) -> str:
     """Generate the AppleScript that dumps messages as a delimited stream.
 
@@ -806,6 +818,7 @@ property RS : (ASCII character 30)
 property US : (ASCII character 31)
 property excluded : {{{excluded}}}
 property outText : ""
+property skipBody : {"true" if skip_body else "false"}
 
 on isExcluded(folderName)
   repeat with e in excluded
@@ -872,13 +885,19 @@ on emit(theMsg, direction, folderName)
     try
       set atts to my joinAttachments(attachments of theMsg)
     end try
+    -- Body fetch is the slowest read (server round-trip when not cached).
+    -- skipBody=true skips it entirely so backfill of years-old mail is
+    -- bounded by metadata-only work. A later sync without --skip-body will
+    -- detect body_hash change and fill the body in.
     set bodyText to ""
-    try
-      with timeout of 30 seconds
-        set bodyText to (content of theMsg)
-      end timeout
-    end try
-    if bodyText is missing value then set bodyText to ""
+    if not skipBody then
+      try
+        with timeout of 30 seconds
+          set bodyText to (content of theMsg)
+        end timeout
+      end try
+      if bodyText is missing value then set bodyText to ""
+    end if
     set rec to direction & US & theId & US & theSubject & US & sName & US & sAddr & US & toStr & US & ccStr & US & dStr & US & "false" & US & cats & US & prio & US & "false" & US & atts & US & folderName & US & bodyText
     -- `outText` is a script-level property; `my outText` keeps the reference
     -- explicit inside the Outlook tell-block (some dictionaries refuse to

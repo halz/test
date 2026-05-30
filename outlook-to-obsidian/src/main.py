@@ -75,6 +75,7 @@ def run_sync(
     since: datetime | None = None,
     until: datetime | None = None,
     use_mock: bool = False,
+    skip_body: bool = False,
 ) -> dict[str, Any]:
     """Execute a sync and return a summary dict."""
     if not dry_run and not config.vault_path.exists():
@@ -104,7 +105,7 @@ def run_sync(
         )
 
         for index, record in enumerate(
-            client.iter_messages(since_filter, until), start=1
+            client.iter_messages(since_filter, until, skip_body=skip_body), start=1
         ):
             if _is_excluded(record.folder_path, config.excluded_folders):
                 continue
@@ -190,6 +191,7 @@ def cmd_sync(args: argparse.Namespace, config: Config) -> int:
             dry_run=args.dry_run,
             since=_parse_since(args.since),
             use_mock=args.mock,
+            skip_body=args.skip_body,
         )
     except (FileNotFoundError, OutlookClientError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -251,7 +253,13 @@ def cmd_backfill(args: argparse.Namespace, config: Config) -> int:
             flush=True,
         )
         try:
-            summary = run_sync(config, since=start, until=stop, use_mock=args.mock)
+            summary = run_sync(
+                config,
+                since=start,
+                until=stop,
+                use_mock=args.mock,
+                skip_body=args.skip_body,
+            )
         except (FileNotFoundError, OutlookClientError) as exc:
             print(f"  chunk failed: {exc}; continuing", file=sys.stderr)
             continue
@@ -383,6 +391,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_sync.add_argument("--dry-run", action="store_true", help="Count only, write nothing")
     p_sync.add_argument("--since", help="Only messages on/after this date (YYYY-MM-DD)")
     p_sync.add_argument("--mock", action="store_true", help="Use built-in sample data")
+    p_sync.add_argument(
+        "--skip-body",
+        action="store_true",
+        help="Don't fetch message body content (metadata-only; fast for uncached mail)",
+    )
     p_sync.set_defaults(func=cmd_sync)
 
     p_backfill = sub.add_parser(
@@ -416,6 +429,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_backfill.add_argument(
         "--mock", action="store_true", help="Use built-in sample data"
+    )
+    p_backfill.add_argument(
+        "--skip-body",
+        action="store_true",
+        help="Don't fetch message body content. Recommended for historical "
+        "backfill — body fetch is the dominant per-message cost when mail "
+        "isn't locally cached. Re-run sync later to fill bodies in.",
     )
     p_backfill.set_defaults(func=cmd_backfill)
 
