@@ -1,0 +1,68 @@
+# Outlook → Obsidian Bridge - 設定テンプレート
+# このファイルを config.yaml にコピーして編集してください:
+#   cp config.example.yaml config.yaml
+
+# Obsidian Vault のルート絶対パス（macOS。~ 展開に対応）
+vault_path: "~/Obsidian/WorkVault"
+
+# Vault 内での出力先サブディレクトリ
+output_subdir: "Emails"
+
+# Outlook アカウント（未指定 or 空配列なら全アカウント）
+accounts: []
+# accounts:
+#   - "yoshi@unitedpetroleum.com.au"
+
+# 同期対象フォルダ
+folders:
+  inbox: true               # 受信トレイ
+  sent: true                # 送信済みアイテム
+  include_subfolders: true  # サブフォルダも再帰的に処理
+  # 送信フォルダ名の検索パターン（部分一致）。Outlook for Mac の AppleScript には
+  # ロケール非依存の "sent items" キーワードが無いため名前で当てる。デフォルトは
+  # 英語と日本語をカバー。他のロケール（独 Gesendet / 西 Enviado など）で運用する
+  # 場合は追記してください。
+  sent_name_patterns:
+    - "Sent"
+    - "送信済み"
+
+# 除外フォルダ（フォルダ名の部分一致）
+excluded_folders:
+  - "Junk"
+  - "Deleted Items"
+  - "RSS Subscriptions"
+
+# 出力オプション
+output:
+  generate_threads: true          # スレッドノートを生成
+  filename_max_length: 80         # ファイル名最大長
+  # false（既定）: 署名（"-- " 以降）を <details> に折り畳む
+  # true        : 署名を本文中にそのまま残す
+  preserve_html_signatures: false
+
+# 差分同期
+sync:
+  initial_full_import: true       # 初回は全件取り込み
+  lookback_buffer_minutes: 60     # 差分同期時のバッファ（時計ズレ対策）
+  applescript_timeout_seconds: 1800  # AppleScript 1回あたりのタイムアウト（既定30分）。
+                                  # 大規模メールボックスではこれより小さくしないこと。
+                                  # それでも足りない場合は --since で期間チャンク。
+
+# 自動スケジュール（macOS launchd LaunchAgent）
+# `python -m src.main schedule install/uninstall/status/preview` で操作。
+# cron が空でない場合は cron を優先、空なら interval_minutes を使う。
+schedule:
+  interval_minutes: 15            # N分おき（cron 未指定時）
+  # cron: "*/15 * * * *"          # cron式 (minute hour day month weekday)。例:
+  # cron: "0 9 * * 1-5"           #   平日9時
+  # cron: "0 9,18 * * *"          #   毎日 9:00 と 18:00
+  # cron: "*/30 9-17 * * 1-5"     #   平日 9-17時、30分おき
+  cron: ""                        # 空 = interval_minutes を使う
+  run_at_login: true              # ログイン時にも実行 (RunAtLoad)
+
+# ロギング（ファイルは level、コンソールは WARNING 以上）
+logging:
+  level: INFO                     # DEBUG / INFO / WARNING / ERROR
+  file: "logs/sync.log"
+  max_size_mb: 10
+  backup_count: 5

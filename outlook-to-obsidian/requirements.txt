@@ -1,0 +1,3 @@
+markdownify>=0.11.6
+PyYAML>=6.0.1
+python-dateutil>=2.8.2
