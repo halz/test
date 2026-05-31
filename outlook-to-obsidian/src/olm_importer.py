@@ -110,10 +110,12 @@ def _folder_from_zip_path(zip_path: str) -> str:
             folder_parts.append(part)
         if folder_parts:
             return "/".join(folder_parts)
-    # Convention 2: filename is Messages*.xml → parent dir is the folder.
+    # Convention 2: filename contains "message" → parent dir is the folder.
+    # Catches both ``Messages_NNN.xml`` (batched, capital M) and the seen-in-the-
+    # wild ``message_NNNNN.xml`` / ``<id>_message.xml`` (single-message, any case).
     if len(parts) >= 2:
-        fname = parts[-1]
-        if fname.lower().startswith("messages") and fname.lower().endswith(".xml"):
+        fname = parts[-1].lower()
+        if "message" in fname and fname.endswith(".xml"):
             return parts[-2]
     # Convention 3: per-message XML under .../<folder>/Messages/<id>.xml.
     if len(parts) >= 3 and parts[-2] == "Messages" and parts[-1].endswith(".xml"):
@@ -239,7 +241,9 @@ def iter_messages_from_olm(olm_path: Path) -> Iterator[MessageRecord]:
     seen: set[str] = set()
     with zipfile.ZipFile(olm_path) as zf:
         candidates = [
-            n for n in zf.namelist() if n.lower().endswith(".xml") and "Messages" in n
+            n
+            for n in zf.namelist()
+            if n.lower().endswith(".xml") and "message" in n.lower()
         ]
         # Per-folder XMLs (those whose ZIP path lets us extract a folder name)
         # take precedence over summary / manifest XMLs that have no folder
