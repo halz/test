@@ -118,8 +118,25 @@ def run_sync(
             body_hash = sha256_text(body_md)
             existing = state.get_message(record.entry_id)
             if existing and existing["body_hash"] == body_hash:
-                skipped += 1
-                continue
+                # Body unchanged. Still rewrite the note if metadata improved
+                # (e.g. a later import-olm pass found this entry in a per-folder
+                # XML and learned the folder / direction).
+                new_folder = record.folder_path or ""
+                try:
+                    old_folder = existing["folder_path"] or ""
+                except (KeyError, IndexError):
+                    old_folder = ""
+                try:
+                    old_direction = existing["direction"] or ""
+                except (KeyError, IndexError):
+                    old_direction = ""
+                metadata_changed = (
+                    new_folder
+                    and new_folder != old_folder
+                ) or record.direction != old_direction
+                if not metadata_changed:
+                    skipped += 1
+                    continue
 
             if existing:
                 note_path = config.vault_path / existing["note_path"]

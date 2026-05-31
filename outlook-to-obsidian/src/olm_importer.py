@@ -86,24 +86,56 @@ def _parse_olm_date(value: str) -> datetime:
 
 
 def _folder_from_zip_path(zip_path: str) -> str:
-    """Derive a human folder name from a path inside the .olm ZIP.
+    """Derive a folder name from a ZIP entry path.
 
-    e.g. ``Accounts/<UUID>/Folders/Inbox/Messages/abc_message.xml`` → ``Inbox``.
-    Recursive folder hierarchies are joined with ``/``.
+    Layouts seen in different Outlook versions:
+    * ``.../Folders/Inbox/Messages_001.xml`` — explicit ``Folders`` segment.
+    * ``.../Folders/Inbox/Sub/<id>_message.xml`` — nested under Folders.
+    * ``.../Inbox/Messages_001.xml`` — folder is the parent of ``Messages*``
+      with no ``Folders`` marker.
+    * ``.../Inbox/<id>_message.xml`` — folder is the grandparent of per-msg
+      XML (parent is ``Messages``).
+
+    Returns the deepest folder name we can identify, or ``""`` on no match.
     """
     parts = zip_path.split("/")
-    try:
+    # Convention 1: explicit "Folders" marker (preferred when present).
+    if "Folders" in parts:
         idx = parts.index("Folders")
-    except ValueError:
-        return ""
-    # Folders after "Folders" up to "Messages" (exclusive) form the hierarchy
-    tail = parts[idx + 1 :]
-    folder_parts: list[str] = []
-    for part in tail:
-        if part == "Messages" or part.endswith(".xml"):
-            break
-        folder_parts.append(part)
-    return "/".join(folder_parts)
+        tail = parts[idx + 1 :]
+        folder_parts: list[str] = []
+        for part in tail:
+            if part == "Messages" or part.endswith(".xml"):
+                break
+            folder_parts.append(part)
+        if folder_parts:
+            return "/".join(folder_parts)
+    # Convention 2: filename is Messages*.xml → parent dir is the folder.
+    if len(parts) >= 2:
+        fname = parts[-1]
+        if fname.lower().startswith("messages") and fname.lower().endswith(".xml"):
+            return parts[-2]
+    # Convention 3: per-message XML under .../<folder>/Messages/<id>.xml.
+    if len(parts) >= 3 and parts[-2] == "Messages" and parts[-1].endswith(".xml"):
+        return parts[-3]
+    return ""
+
+
+def _folder_from_xml(elem: ET.Element) -> str:
+    """Best-effort: read folder name from the email XML itself.
+
+    OPF tag names vary by Outlook version; try several common ones.
+    """
+    for tag in (
+        "OPFMessageCopyFolderName",
+        "OPFMessageCopyParentFolderName",
+        "OPFMessageCopyFolder",
+        "OPFFolderCopyName",
+    ):
+        val = _text(elem, tag)
+        if val:
+            return val
+    return ""
 
 
 def _hash_id(*parts: object) -> str:
@@ -170,6 +202,11 @@ def _parse_email(elem: ET.Element, folder_path: str) -> MessageRecord:
             ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
             attachments.append(Attachment(name=name, size_bytes=0, extension=ext))
 
+    # Folder: prefer an explicit XML tag, fall back to the ZIP-path-derived one.
+    xml_folder = _folder_from_xml(elem)
+    if xml_folder:
+        folder_path = xml_folder
+
     direction = "sent" if "sent" in folder_path.lower() or "送信" in folder_path else "received"
 
     if not msg_id:
@@ -204,6 +241,13 @@ def iter_messages_from_olm(olm_path: Path) -> Iterator[MessageRecord]:
         candidates = [
             n for n in zf.namelist() if n.lower().endswith(".xml") and "Messages" in n
         ]
+        # Per-folder XMLs (those whose ZIP path lets us extract a folder name)
+        # take precedence over summary / manifest XMLs that have no folder
+        # context — when both list the same Message-ID, the per-folder copy
+        # wins the dedup race so the recorded folder isn't lost to "".
+        candidates.sort(
+            key=lambda n: (0 if _folder_from_zip_path(n) else 1, n)
+        )
         logger.info("OLM %s: %d candidate XML file(s)", olm_path.name, len(candidates))
         for name in candidates:
             folder = _folder_from_zip_path(name)
