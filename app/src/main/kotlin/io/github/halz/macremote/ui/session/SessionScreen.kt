@@ -74,11 +74,15 @@ fun SessionScreen(
     var startFailed by remember { mutableStateOf<String?>(null) }
     var retryToken by remember { mutableStateOf(0) }
 
-    // Connect only when no session object exists for the tab (fresh entry or
-    // after an explicit retry); a failed tab keeps showing its error otherwise.
+    // (Re)connect when the tab has no session or only a finished one. Coming
+    // from the profile list or switching to a dead tab is an intent to
+    // connect; a session that fails right after still shows its error pane.
     LaunchedEffect(currentId, retryToken) {
         startFailed = null
-        if (sessionHolder.sessionFor(currentId) == null) {
+        val existing = sessionHolder.sessionFor(currentId)
+        val finished = existing != null &&
+            (existing.state.value is SessionState.Failed || existing.state.value == SessionState.Closed)
+        if (existing == null || finished) {
             val profile = repository.find(currentId)
             if (profile == null) {
                 startFailed = "接続先が見つかりません"

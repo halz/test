@@ -7,8 +7,8 @@ import java.util.UUID
 
 /**
  * Backup format for connection profiles. Passwords are included IN PLAIN TEXT
- * so a backup restores to a working state on another device — the UI warns
- * about this before exporting.
+ * so a backup restores to a working state on another device — the export
+ * result toast reminds the user to handle the file with care.
  */
 @Serializable
 data class ProfileBackup(
@@ -46,6 +46,7 @@ object ProfileTransfer {
     /** Returns the number of imported profiles, or throws on malformed input. */
     suspend fun import(content: String, repository: ProfileRepository, secretStore: SecretStore): Int {
         val backup = json.decodeFromString<ProfileBackup>(content)
+        require(backup.version == 1) { "未対応のバックアップバージョンです (version=${backup.version})" }
         backup.profiles.forEach { entry ->
             val id = entry.id.ifBlank { UUID.randomUUID().toString() }
             repository.upsert(

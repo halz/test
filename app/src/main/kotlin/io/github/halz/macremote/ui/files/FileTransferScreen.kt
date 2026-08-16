@@ -42,7 +42,10 @@ import com.jcraft.jsch.Session
 import io.github.halz.macremote.data.ProfileRepository
 import io.github.halz.macremote.data.SecretStore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.Vector
 
@@ -71,16 +74,23 @@ fun FileTransferScreen(
     var entries by remember { mutableStateOf(listOf<RemoteEntry>()) }
     var sftp by remember { mutableStateOf<Pair<Session, ChannelSftp>?>(null) }
     var pendingDownload by remember { mutableStateOf<String?>(null) }
+    // ChannelSftp is not thread-safe; every operation is serialized here so a
+    // long download can't corrupt a concurrently-tapped directory listing.
+    val sftpMutex = remember { Mutex() }
 
     fun toast(message: String) = Toast.makeText(context, message, Toast.LENGTH_LONG).show()
 
+    fun joinPath(dir: String, name: String) = if (dir == "/") "/$name" else "$dir/$name"
+
     suspend fun refresh(channel: ChannelSftp, path: String) {
-        val listed = withContext(Dispatchers.IO) {
-            @Suppress("UNCHECKED_CAST")
-            (channel.ls(path) as Vector<ChannelSftp.LsEntry>)
-                .filter { it.filename != "." && it.filename != ".." }
-                .map { RemoteEntry(it.filename, it.attrs.isDir, it.attrs.size) }
-                .sortedWith(compareByDescending<RemoteEntry> { it.isDirectory }.thenBy { it.name.lowercase() })
+        val listed = sftpMutex.withLock {
+            withContext(Dispatchers.IO) {
+                @Suppress("UNCHECKED_CAST")
+                (channel.ls(path) as Vector<ChannelSftp.LsEntry>)
+                    .filter { it.filename != "." && it.filename != ".." }
+                    .map { RemoteEntry(it.filename, it.attrs.isDir, it.attrs.size) }
+                    .sortedWith(compareByDescending<RemoteEntry> { it.isDirectory }.thenBy { it.name.lowercase() })
+            }
         }
         entries = listed
         currentPath = path
@@ -89,7 +99,11 @@ fun FileTransferScreen(
     LaunchedEffect(profileId) {
         loading = true
         errorMessage = null
-        runCatching {
+        // Holds the connection until ownership passes to `sftp` (and onDispose):
+        // if this effect is cancelled mid-connect, withContext discards its
+        // result while throwing, and only this reference can clean it up.
+        var pending: Pair<Session, ChannelSftp>? = null
+        try {
             val profile = repository.find(profileId) ?: error("接続先が見つかりません")
             if (profile.username.isEmpty()) {
                 error(
@@ -100,21 +114,37 @@ fun FileTransferScreen(
             val password = secretStore.loadPassword(profileId).orEmpty()
             val connected = withContext(Dispatchers.IO) {
                 val session = JSch().getSession(profile.username, profile.host, 22)
-                session.setPassword(password)
-                session.setConfig("StrictHostKeyChecking", "no")
-                session.timeout = 15_000
-                session.connect()
-                val channel = session.openChannel("sftp") as ChannelSftp
-                channel.connect()
-                session to channel
+                try {
+                    session.setPassword(password.toByteArray(Charsets.UTF_8))
+                    session.setConfig("StrictHostKeyChecking", "no")
+                    session.timeout = 15_000
+                    session.connect()
+                    val channel = session.openChannel("sftp") as ChannelSftp
+                    channel.connect()
+                    val pair = session to channel
+                    pending = pair
+                    pair
+                } catch (t: Throwable) {
+                    runCatching { session.disconnect() }
+                    throw t
+                }
             }
             sftp = connected
+            pending = null
             refresh(connected.second, withContext(Dispatchers.IO) { connected.second.home })
-        }.onFailure {
-            errorMessage = "接続できませんでした: ${it.message}\n\n" +
+            loading = false
+        } catch (t: Throwable) {
+            pending?.let { p ->
+                withContext(NonCancellable + Dispatchers.IO) {
+                    runCatching { p.second.disconnect() }
+                    runCatching { p.first.disconnect() }
+                }
+            }
+            if (t is kotlinx.coroutines.CancellationException) throw t
+            errorMessage = "接続できませんでした: ${t.message}\n\n" +
                 "Mac の「システム設定 → 一般 → 共有 → リモートログイン」がオンか確認してください"
+            loading = false
         }
-        loading = false
     }
 
     DisposableEffect(Unit) {
@@ -138,10 +168,12 @@ fun FileTransferScreen(
         val channel = sftp?.second ?: return@rememberLauncherForActivityResult
         scope.launch {
             runCatching {
-                withContext(Dispatchers.IO) {
-                    context.contentResolver.openOutputStream(uri)?.use { out ->
-                        channel.get(remotePath).use { input -> input.copyTo(out) }
-                    } ?: error("保存先を開けませんでした")
+                sftpMutex.withLock {
+                    withContext(Dispatchers.IO) {
+                        context.contentResolver.openOutputStream(uri)?.use { out ->
+                            channel.get(remotePath).use { input -> input.copyTo(out) }
+                        } ?: error("保存先を開けませんでした")
+                    }
                 }
             }.onSuccess { toast("ダウンロードしました") }
                 .onFailure { toast("ダウンロード失敗: ${it.message}") }
@@ -159,10 +191,12 @@ fun FileTransferScreen(
                     context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
                         ?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
                 } ?: "upload-${System.currentTimeMillis()}"
-                withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(uri)?.use { input ->
-                        channel.put(input, "$currentPath/$name")
-                    } ?: error("ファイルを開けませんでした")
+                sftpMutex.withLock {
+                    withContext(Dispatchers.IO) {
+                        context.contentResolver.openInputStream(uri)?.use { input ->
+                            channel.put(input, joinPath(currentPath, name))
+                        } ?: error("ファイルを開けませんでした")
+                    }
                 }
                 refresh(channel, currentPath)
                 name
@@ -218,7 +252,7 @@ fun FileTransferScreen(
                         }
                         items(entries, key = { it.name }) { entry ->
                             EntryRow(entry) {
-                                val path = if (currentPath == "/") "/${entry.name}" else "$currentPath/${entry.name}"
+                                val path = joinPath(currentPath, entry.name)
                                 if (entry.isDirectory) {
                                     scope.launch {
                                         sftp?.second?.let {

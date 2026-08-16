@@ -176,15 +176,6 @@ class SessionHolder(private val appScope: CoroutineScope) {
     fun sessionFor(profileId: String): VncSession? =
         _sessions.value.find { it.profile.id == profileId }
 
-    /** The live session for [profileId], or null if none/finished. */
-    fun activeFor(profileId: String): VncSession? {
-        val session = sessionFor(profileId) ?: return null
-        return when (session.state.value) {
-            is SessionState.Failed, SessionState.Closed -> null
-            else -> session
-        }
-    }
-
     fun close(profileId: String) {
         sessionFor(profileId)?.let { session ->
             session.close()
