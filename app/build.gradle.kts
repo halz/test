@@ -44,6 +44,13 @@ android {
     buildFeatures {
         compose = true
     }
+
+    packaging {
+        resources {
+            // jsch and jspecify both ship this OSGi manifest; neither is needed on Android.
+            excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
+        }
+    }
 }
 
 kotlin {
