@@ -8,6 +8,7 @@ import io.github.halz.macremote.data.AppSettings
 import io.github.halz.macremote.data.ProfileRepository
 import io.github.halz.macremote.data.SecretStore
 import io.github.halz.macremote.session.SessionHolder
+import io.github.halz.macremote.ui.files.FileTransferScreen
 import io.github.halz.macremote.ui.profiles.ProfileEditScreen
 import io.github.halz.macremote.ui.profiles.ProfileListScreen
 import io.github.halz.macremote.ui.session.SessionScreen
@@ -24,7 +25,14 @@ fun AppNavGraph(
         composable("profiles") {
             ProfileListScreen(
                 repository = profileRepository,
-                onConnect = { profile -> navController.navigate("session/${profile.id}") },
+                secretStore = secretStore,
+                onConnect = { profile ->
+                    // Keep at most one session screen on the stack; live
+                    // sessions themselves are owned by SessionHolder.
+                    navController.navigate("session/${profile.id}") {
+                        popUpTo("profiles")
+                    }
+                },
                 onEdit = { id -> navController.navigate(if (id == null) "edit" else "edit?id=$id") },
             )
         }
@@ -51,7 +59,16 @@ fun AppNavGraph(
                 secretStore = secretStore,
                 settings = settings,
                 sessionHolder = sessionHolder,
+                onOpenFiles = { id -> navController.navigate("files/$id") },
                 onExit = { navController.popBackStack() },
+            )
+        }
+        composable("files/{profileId}") { backStackEntry ->
+            FileTransferScreen(
+                profileId = backStackEntry.arguments?.getString("profileId").orEmpty(),
+                repository = profileRepository,
+                secretStore = secretStore,
+                onBack = { navController.popBackStack() },
             )
         }
     }

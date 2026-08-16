@@ -29,6 +29,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -54,9 +55,9 @@ import kotlinx.coroutines.launch
 import kotlin.math.floor
 
 /**
- * The remote-screen view. The session itself lives in [SessionHolder]
- * (application scope), so folding/unfolding the device re-creates this
- * composable but re-binds to the same TCP connection.
+ * The remote-screen view with one tab per live session. Sessions live in
+ * [SessionHolder] (application scope), so folding/unfolding the device
+ * re-creates this composable but re-binds to the same TCP connections.
  */
 @Composable
 fun SessionScreen(
@@ -65,27 +66,38 @@ fun SessionScreen(
     secretStore: SecretStore,
     settings: AppSettings,
     sessionHolder: SessionHolder,
+    onOpenFiles: (String) -> Unit,
     onExit: () -> Unit,
 ) {
-    var session by remember { mutableStateOf(sessionHolder.activeFor(profileId)) }
+    val sessions by sessionHolder.sessions.collectAsState()
+    var currentId by rememberSaveable { mutableStateOf(profileId) }
     var startFailed by remember { mutableStateOf<String?>(null) }
     var retryToken by remember { mutableStateOf(0) }
 
-    LaunchedEffect(profileId, retryToken) {
-        if (sessionHolder.activeFor(profileId) == null) {
-            val profile = repository.find(profileId)
+    // Connect only when no session object exists for the tab (fresh entry or
+    // after an explicit retry); a failed tab keeps showing its error otherwise.
+    LaunchedEffect(currentId, retryToken) {
+        startFailed = null
+        if (sessionHolder.sessionFor(currentId) == null) {
+            val profile = repository.find(currentId)
             if (profile == null) {
                 startFailed = "接続先が見つかりません"
                 return@LaunchedEffect
             }
-            val password = secretStore.loadPassword(profileId).orEmpty()
-            session = sessionHolder.start(profile, password)
-        } else {
-            session = sessionHolder.activeFor(profileId)
+            val password = secretStore.loadPassword(currentId).orEmpty()
+            sessionHolder.start(profile, password)
         }
     }
 
-    val currentSession = session
+    fun closeTab(id: String) {
+        sessionHolder.close(id)
+        if (id == currentId) {
+            val remaining = sessionHolder.sessions.value.firstOrNull()
+            if (remaining != null) currentId = remaining.profile.id else onExit()
+        }
+    }
+
+    val currentSession = sessions.find { it.profile.id == currentId }
     val state = currentSession?.state?.collectAsState()?.value
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
@@ -96,19 +108,64 @@ fun SessionScreen(
             }
             state is SessionState.Failed -> ErrorPane(
                 state.message,
-                onRetry = { retryToken++ },
-                onExit = { sessionHolder.close(); onExit() },
+                onRetry = { sessionHolder.close(currentId); retryToken++ },
+                onExit = { closeTab(currentId) },
             )
             state == SessionState.Closed -> ErrorPane(
                 "切断されました",
-                onRetry = { retryToken++ },
-                onExit = { sessionHolder.close(); onExit() },
+                onRetry = { sessionHolder.close(currentId); retryToken++ },
+                onExit = { closeTab(currentId) },
             )
             state is SessionState.Connected -> ConnectedContent(
                 session = currentSession,
                 settings = settings,
-                onDisconnect = { sessionHolder.close(); onExit() },
+                onOpenFiles = { onOpenFiles(currentId) },
+                onDisconnect = { closeTab(currentId) },
             )
+        }
+
+        // Session tabs, shown only when there is something to switch between.
+        if (sessions.size > 1 || (sessions.size == 1 && sessions[0].profile.id != currentId)) {
+            SessionTabs(
+                sessions = sessions,
+                currentId = currentId,
+                onSelect = { currentId = it },
+                onCloseTab = { closeTab(it) },
+                onAdd = onExit,
+                modifier = Modifier.align(Alignment.BottomStart),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SessionTabs(
+    sessions: List<VncSession>,
+    currentId: String,
+    onSelect: (String) -> Unit,
+    onCloseTab: (String) -> Unit,
+    onAdd: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+        shape = MaterialTheme.shapes.large,
+        modifier = modifier.navigationBarsPadding().padding(start = 8.dp, bottom = 56.dp),
+    ) {
+        Row(
+            Modifier.horizontalScroll(rememberScrollState()).padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            sessions.forEach { session ->
+                val id = session.profile.id
+                FilterChip(
+                    selected = id == currentId,
+                    onClick = { if (id == currentId) onCloseTab(id) else onSelect(id) },
+                    label = { Text(if (id == currentId) "${session.profile.name.ifEmpty { session.profile.host }} ✕" else session.profile.name.ifEmpty { session.profile.host }) },
+                )
+            }
+            TextButton(onClick = onAdd) { Text("＋") }
         }
     }
 }
@@ -117,6 +174,7 @@ fun SessionScreen(
 private fun ConnectedContent(
     session: VncSession,
     settings: AppSettings,
+    onOpenFiles: () -> Unit,
     onDisconnect: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -301,6 +359,7 @@ private fun ConnectedContent(
                         TextButton(onClick = {
                             clipboard.getText()?.text?.let { session.paste(it) }
                         }) { Text("貼付") }
+                        TextButton(onClick = onOpenFiles) { Text("ファイル") }
                         Box {
                             TextButton(onClick = { scaleMenuOpen = true }) { Text("解像度") }
                             DropdownMenu(expanded = scaleMenuOpen, onDismissRequest = { scaleMenuOpen = false }) {
@@ -319,21 +378,38 @@ private fun ConnectedContent(
                         }
                         TextButton(onClick = { transform.fit() }) { Text("全体") }
                         TextButton(onClick = { transform.fill() }) { Text("フィル") }
-                        ModifierChip("⌘", Keysyms.SUPER_L, modifiers) { modifiers = it }
-                        ModifierChip("⌃", Keysyms.CONTROL_L, modifiers) { modifiers = it }
-                        ModifierChip("⌥", Keysyms.ALT_L, modifiers) { modifiers = it }
-                        ModifierChip("⇧", Keysyms.SHIFT_L, modifiers) { modifiers = it }
-                        TextButton(onClick = { session.keyPress(Keysyms.ESCAPE, consumeModifiers()) }) { Text("Esc") }
-                        TextButton(onClick = { session.keyPress(Keysyms.TAB, consumeModifiers()) }) { Text("Tab") }
-                        TextButton(onClick = { session.keyPress(Keysyms.LEFT, consumeModifiers()) }) { Text("←") }
-                        TextButton(onClick = { session.keyPress(Keysyms.UP, consumeModifiers()) }) { Text("↑") }
-                        TextButton(onClick = { session.keyPress(Keysyms.DOWN, consumeModifiers()) }) { Text("↓") }
-                        TextButton(onClick = { session.keyPress(Keysyms.RIGHT, consumeModifiers()) }) { Text("→") }
                     }
                 }
             }
             TextButton(onClick = { toolbarVisible = !toolbarVisible }) {
                 Text(if (toolbarVisible) "▲" else "▼", color = Color.White.copy(alpha = 0.6f))
+            }
+        }
+
+        // Modifier/navigation keys along the bottom edge, above the IME when open.
+        Surface(
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+            shape = MaterialTheme.shapes.large,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(bottom = 4.dp),
+        ) {
+            Row(
+                Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ModifierChip("⌘", Keysyms.SUPER_L, modifiers) { modifiers = it }
+                ModifierChip("⌃", Keysyms.CONTROL_L, modifiers) { modifiers = it }
+                ModifierChip("⌥", Keysyms.ALT_L, modifiers) { modifiers = it }
+                ModifierChip("⇧", Keysyms.SHIFT_L, modifiers) { modifiers = it }
+                TextButton(onClick = { session.keyPress(Keysyms.ESCAPE, consumeModifiers()) }) { Text("Esc") }
+                TextButton(onClick = { session.keyPress(Keysyms.TAB, consumeModifiers()) }) { Text("Tab") }
+                TextButton(onClick = { session.keyPress(Keysyms.LEFT, consumeModifiers()) }) { Text("←") }
+                TextButton(onClick = { session.keyPress(Keysyms.UP, consumeModifiers()) }) { Text("↑") }
+                TextButton(onClick = { session.keyPress(Keysyms.DOWN, consumeModifiers()) }) { Text("↓") }
+                TextButton(onClick = { session.keyPress(Keysyms.RIGHT, consumeModifiers()) }) { Text("→") }
             }
         }
     }

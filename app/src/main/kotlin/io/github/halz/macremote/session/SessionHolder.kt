@@ -155,31 +155,40 @@ class VncSession(
 }
 
 /**
- * Application-scoped owner of the current session. Screens re-bind to the
- * existing session after configuration changes instead of reconnecting.
+ * Application-scoped owner of all live sessions (one per profile, shown as
+ * tabs). Screens re-bind to existing sessions after configuration changes
+ * instead of reconnecting. A finished (failed/closed) session stays listed —
+ * its tab shows the error until retried or closed.
  */
 class SessionHolder(private val appScope: CoroutineScope) {
 
-    var current: VncSession? = null
-        private set
+    private val _sessions = MutableStateFlow<List<VncSession>>(emptyList())
+    val sessions: StateFlow<List<VncSession>> = _sessions
 
     fun start(profile: Profile, password: String): VncSession {
-        current?.close()
-        return VncSession(profile, password, appScope).also { current = it }
+        _sessions.value.find { it.profile.id == profile.id }?.let { existing ->
+            existing.close()
+            _sessions.value = _sessions.value - existing
+        }
+        return VncSession(profile, password, appScope).also { _sessions.value = _sessions.value + it }
     }
+
+    fun sessionFor(profileId: String): VncSession? =
+        _sessions.value.find { it.profile.id == profileId }
 
     /** The live session for [profileId], or null if none/finished. */
     fun activeFor(profileId: String): VncSession? {
-        val session = current ?: return null
-        if (session.profile.id != profileId) return null
+        val session = sessionFor(profileId) ?: return null
         return when (session.state.value) {
             is SessionState.Failed, SessionState.Closed -> null
             else -> session
         }
     }
 
-    fun close() {
-        current?.close()
-        current = null
+    fun close(profileId: String) {
+        sessionFor(profileId)?.let { session ->
+            session.close()
+            _sessions.value = _sessions.value - session
+        }
     }
 }
