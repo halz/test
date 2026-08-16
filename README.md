@@ -1,0 +1,68 @@
+# Mac Remote — Android から Mac の画面共有に接続する VNC クライアント
+
+iOS の「Screens」のように、Android 端末から Mac の「画面共有」へインターネット経由で接続するアプリです。接続経路には [Tailscale](https://tailscale.com) を使い、どこからでも自宅・職場の Mac に安全に届きます。Galaxy Z Fold 8 のカバースクリーン / メインスクリーンの両方に対応したレスポンシブ UI です。
+
+## 構成
+
+| モジュール | 内容 |
+|---|---|
+| `:rfb` | 純 Kotlin/JVM の RFB (VNC) プロトコル実装。Android 非依存で、JVM 単体でテスト可能 |
+| `:app` | Jetpack Compose の Android アプリ本体 |
+
+`:app` は Android SDK がある環境でのみ Gradle に include されます (`settings.gradle.kts`)。SDK のない CI コンテナでも `gradle :rfb:test` が動きます。
+
+### 実装済みプロトコル
+
+- RFB 3.7 / 3.8 ハンドシェイク
+- 認証: VNC パスワード認証 (type 2) と **Apple Remote Desktop 認証 (type 30, DH+MD5+AES-128)** — Mac のユーザ名+パスワードでログイン可能
+- エンコーディング: Zlib / CopyRect / Raw + DesktopSize
+- 入力: マウス (クリック / ドラッグ / 右クリック / スクロール)、キーボード (X11 keysym + Unicode keysym)
+
+## Mac 側の準備
+
+1. **システム設定 → 一般 → 共有 → 画面共有** をオンにする
+2. macOS 14 以降で「高パフォーマンス」モードの選択肢が出る場合は**標準モード**を使う (高パフォーマンスモードは VNC 非互換の独自プロトコルです)
+3. 認証方法は 2 通り:
+   - **Mac のユーザ名+パスワードで入る** (推奨): 追加設定は不要。アプリの接続先設定で「ユーザ名」を入力する
+   - **VNC パスワードで入る**: 画面共有の詳細設定で「VNC 使用者が画面を操作することを許可」を有効にしてパスワードを設定し、アプリでは「ユーザ名」を空にする
+4. Mac に [Tailscale](https://tailscale.com/download) をインストールしてログインする
+
+## Android 側の準備
+
+1. [Tailscale Android アプリ](https://play.google.com/store/apps/details?id=com.tailscale.ipn) をインストールし、同じ Tailnet にログインして VPN を有効にする
+2. 本アプリをインストールし、「＋」から接続先を登録する
+   - ホスト: Mac の MagicDNS 名 (例 `my-mac.tail1234.ts.net`) または Tailnet IP (`100.x.y.z`)
+   - ポート: `5900` (既定)
+   - ユーザ名: Mac ログインで入るなら Mac のアカウント名。VNC パスワード方式なら空欄
+   - パスワード: 上で選んだ方式のパスワード (Android Keystore で暗号化して保存されます)
+
+## 操作方法
+
+| 操作 | 動作 |
+|---|---|
+| 1 本指タップ | クリック (タップした位置へポインタが移動) |
+| 1 本指ドラッグ | 表示のパン (Mac には送られない) |
+| ダブルタップ → そのままドラッグ | 左ボタンドラッグ (選択・ウィンドウ移動) |
+| 長押し | 右クリック |
+| 2 本指上下ドラッグ | スクロール |
+| ピンチ | ズーム |
+| ツールバー ⌨ | ソフトキーボード表示 (日本語 IME 対応・ベストエフォート) |
+| ツールバー ⌘⌃⌥⇧ | 修飾キー (次のキー 1 回に適用) |
+
+## ビルド
+
+Android Studio でそのまま開くか:
+
+```bash
+./gradlew :app:assembleDebug     # 要 Android SDK
+./gradlew :rfb:test              # プロトコル層のテスト (SDK 不要)
+```
+
+`:rfb` の統合テストは `x11vnc` / `Xvfb` / `xdotool` があれば実サーバに接続して検証し、なければ自動でスキップします。
+
+## 既知の制限
+
+- 日本語入力は Android 側 IME で確定した文字を Unicode keysym として送るベストエフォート方式です。Mac 側アプリによっては取りこぼしがあります
+- macOS はカーソルを画面に描画しないことがあるため、最後にタップした位置をローカルのリングで表示しています (Cursor 擬似エンコーディングは未対応)
+- ARD 認証の DH 512bit + MD5 は Apple 側仕様であり暗号強度は弱いため、**Tailscale トンネル内での使用を前提**としています。画面共有ポートをインターネットに直接公開しないでください
+- バックグラウンドに回ると OS により接続が切れることがあります (再接続ボタンでワンタップ復帰)
