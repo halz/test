@@ -29,6 +29,9 @@ class ZlibDecoder : Decoder {
         while (produced < expectedBytes) {
             val n = inflater.inflate(expanded, produced, expectedBytes - produced)
             if (n == 0) {
+                if (inflater.finished()) {
+                    throw RfbProtocolException("zlib stream ended prematurely at $produced of $expectedBytes bytes")
+                }
                 if (inflater.needsInput()) {
                     throw RfbProtocolException("zlib rect truncated: got $produced of $expectedBytes bytes")
                 }

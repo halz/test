@@ -5,6 +5,7 @@ import io.github.halz.macremote.rfb.RfbAuthException
 import io.github.halz.macremote.rfb.client.RfbClient
 import io.github.halz.macremote.rfb.client.RfbEvent
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -71,7 +72,9 @@ class VncSession(
     }
 
     private val job: Job = scope.launch(Dispatchers.IO) {
-        val collector = launch {
+        // UNDISPATCHED: the subscription must exist before run() can emit
+        // Connected, or a replay-1 flow could drop it behind a later event.
+        val collector = launch(start = CoroutineStart.UNDISPATCHED) {
             client.events.collect { event ->
                 when (event) {
                     is RfbEvent.Connected -> {

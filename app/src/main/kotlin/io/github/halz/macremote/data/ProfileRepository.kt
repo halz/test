@@ -30,7 +30,11 @@ class ProfileRepository(private val dataStore: DataStore<Preferences>) {
             val current = prefs[key]?.let {
                 runCatching { json.decodeFromString<List<Profile>>(it) }.getOrNull()
             } ?: emptyList()
-            val updated = current.filter { it.id != profile.id } + profile
+            val updated = if (current.any { it.id == profile.id }) {
+                current.map { if (it.id == profile.id) profile else it }
+            } else {
+                current + profile
+            }
             prefs[key] = json.encodeToString(updated)
         }
     }

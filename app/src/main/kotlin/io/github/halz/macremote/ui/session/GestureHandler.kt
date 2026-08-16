@@ -7,7 +7,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.PointerEvent
 import androidx.compose.ui.input.pointer.pointerInput
 import io.github.halz.macremote.rfb.messages.PointerButtons
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.abs
 
 /**
