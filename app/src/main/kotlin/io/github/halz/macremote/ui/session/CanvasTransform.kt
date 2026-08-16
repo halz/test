@@ -37,6 +37,23 @@ class CanvasTransform {
         userZoomed = false
     }
 
+    /**
+     * Zoom until the view is completely covered (no letterbox), cropping the
+     * remote screen's overflowing axis. Marked as a user zoom so fold/keyboard
+     * size changes clamp instead of resetting back to fit.
+     */
+    fun fill() {
+        if (viewSize == IntSize.Zero || remoteSize == IntSize.Zero) return
+        scale = maxOf(
+            viewSize.width.toFloat() / remoteSize.width,
+            viewSize.height.toFloat() / remoteSize.height,
+        )
+        offsetX = (viewSize.width - remoteSize.width * scale) / 2f
+        offsetY = (viewSize.height - remoteSize.height * scale) / 2f
+        userZoomed = true
+        clampOffset()
+    }
+
     fun zoomBy(factor: Float, pivot: Offset) {
         val newScale = (scale * factor).coerceIn(minFitScale() * 0.5f, 8f)
         val applied = newScale / scale

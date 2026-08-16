@@ -318,6 +318,7 @@ private fun ConnectedContent(
                             }
                         }
                         TextButton(onClick = { transform.fit() }) { Text("全体") }
+                        TextButton(onClick = { transform.fill() }) { Text("フィル") }
                         ModifierChip("⌘", Keysyms.SUPER_L, modifiers) { modifiers = it }
                         ModifierChip("⌃", Keysyms.CONTROL_L, modifiers) { modifiers = it }
                         ModifierChip("⌥", Keysyms.ALT_L, modifiers) { modifiers = it }
