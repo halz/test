@@ -17,6 +17,7 @@ class MainActivity : ComponentActivity() {
                 AppNavGraph(
                     profileRepository = app.profileRepository,
                     secretStore = app.secretStore,
+                    settings = app.appSettings,
                     sessionHolder = app.sessionHolder,
                 )
             }

@@ -10,18 +10,45 @@ import io.github.halz.macremote.rfb.messages.PointerButtons
 import kotlin.math.abs
 
 /**
- * Touch model ("direct touch + pan", Screens-like):
+ * Pointer targets differ per mode, so gestures delegate position decisions:
+ *
+ * Direct mode ("Screens"-like):
  *  - one-finger tap          -> left click at the touched point
  *  - one-finger drag         -> pan the viewport (nothing sent to the Mac)
- *  - double-tap then drag    -> left-button drag (text selection, window move)
- *  - long-press (no move)    -> right click
+ *  - double-tap then drag    -> left-button drag at the touched point
+ *  - long-press (no move)    -> right click at the touched point
+ *
+ * Trackpad mode (laptop-like, relative):
+ *  - one-finger drag         -> move the virtual cursor (hover)
+ *  - tap                     -> left click at the cursor
+ *  - double-tap then drag    -> left-button drag from the cursor
+ *  - long-press (no move)    -> right click at the cursor
+ *
+ * Both modes:
  *  - two-finger vertical drag-> scroll wheel
  *  - two-finger pinch        -> zoom (centroid-anchored) + pan
  */
+interface PointerTarget {
+    /** True when relative (trackpad) mode is active. */
+    fun isTrackpad(): Boolean
+
+    /** Server coordinates for an absolute touch position (direct mode). */
+    fun resolveDirect(viewPosition: Offset): Offset
+
+    /** Current virtual cursor in server coordinates (trackpad mode). */
+    fun cursor(): Offset
+
+    /** Applies a view-space delta to the cursor; returns the new server position. */
+    fun moveCursorBy(viewDelta: Offset): Offset
+
+    /** Sends a PointerEvent with [buttonMask] at [server] coordinates. */
+    fun send(buttonMask: Int, server: Offset)
+}
+
 fun Modifier.vncGestures(
     transform: CanvasTransform,
-    onPointer: (buttonMask: Int, remote: Offset) -> Unit,
-): Modifier = pointerInput(Unit) {
+    target: PointerTarget,
+): Modifier = pointerInput(transform, target) {
     var lastTapUptime = 0L
     var lastTapPosition = Offset.Zero
 
@@ -30,14 +57,15 @@ fun Modifier.vncGestures(
         val slop = viewConfiguration.touchSlop
         val doubleTapWindow = viewConfiguration.doubleTapTimeoutMillis
         val longPressTimeout = viewConfiguration.longPressTimeoutMillis
+        val trackpad = target.isTrackpad()
 
         val isDoubleTapDrag = down.uptimeMillis - lastTapUptime <= doubleTapWindow &&
             (down.position - lastTapPosition).getDistance() <= slop * 4
         var mode: GestureMode = if (isDoubleTapDrag) GestureMode.LeftDrag else GestureMode.Pending
         if (mode == GestureMode.LeftDrag) {
-            val remote = transform.toRemote(down.position)
-            onPointer(0, remote)
-            onPointer(PointerButtons.LEFT, remote)
+            val server = if (trackpad) target.cursor() else target.resolveDirect(down.position)
+            target.send(0, server)
+            target.send(PointerButtons.LEFT, server)
         }
 
         var lastSinglePosition = down.position
@@ -59,10 +87,10 @@ fun Modifier.vncGestures(
 
             if (event == null) {
                 // Long press with no movement: right click.
-                val remote = transform.toRemote(down.position)
-                onPointer(0, remote)
-                onPointer(PointerButtons.RIGHT, remote)
-                onPointer(0, remote)
+                val server = if (trackpad) target.cursor() else target.resolveDirect(down.position)
+                target.send(0, server)
+                target.send(PointerButtons.RIGHT, server)
+                target.send(0, server)
                 mode = GestureMode.Consumed
                 continue
             }
@@ -72,16 +100,17 @@ fun Modifier.vncGestures(
             if (pressed.isEmpty()) {
                 when (mode) {
                     GestureMode.Pending -> {
-                        // Tap: click where the finger went down.
-                        val remote = transform.toRemote(down.position)
-                        onPointer(0, remote)
-                        onPointer(PointerButtons.LEFT, remote)
-                        onPointer(0, remote)
+                        // Tap: click at the cursor (trackpad) or touch point (direct).
+                        val server = if (trackpad) target.cursor() else target.resolveDirect(down.position)
+                        target.send(0, server)
+                        target.send(PointerButtons.LEFT, server)
+                        target.send(0, server)
                         lastTapUptime = lastEventUptime
                         lastTapPosition = down.position
                     }
                     GestureMode.LeftDrag -> {
-                        onPointer(0, transform.toRemote(lastSinglePosition))
+                        val server = if (trackpad) target.cursor() else target.resolveDirect(lastSinglePosition)
+                        target.send(0, server)
                         // Counts as a tap for double-tap chains (triple-click selects lines).
                         lastTapUptime = lastEventUptime
                         lastTapPosition = lastSinglePosition
@@ -117,12 +146,12 @@ fun Modifier.vncGestures(
                             transform.panBy(centroid - lastCentroid)
                         } else {
                             scrollAccumulator += centroid.y - lastCentroid.y
-                            val remote = transform.toRemote(centroid)
+                            val server = if (trackpad) target.cursor() else target.resolveDirect(centroid)
                             while (abs(scrollAccumulator) >= scrollStepPx) {
                                 // Fingers moving down reveal earlier content = wheel up.
                                 val button = if (scrollAccumulator > 0) PointerButtons.WHEEL_UP else PointerButtons.WHEEL_DOWN
-                                onPointer(button, remote)
-                                onPointer(0, remote)
+                                target.send(button, server)
+                                target.send(0, server)
                                 scrollAccumulator -= if (scrollAccumulator > 0) scrollStepPx else -scrollStepPx
                             }
                         }
@@ -144,12 +173,20 @@ fun Modifier.vncGestures(
                     }
                 }
                 GestureMode.Pan -> {
-                    transform.panBy(change.position - lastSinglePosition)
+                    val delta = change.position - lastSinglePosition
+                    if (trackpad) {
+                        // Hover-move the virtual cursor.
+                        target.send(0, target.moveCursorBy(delta))
+                    } else {
+                        transform.panBy(delta)
+                    }
                     lastSinglePosition = change.position
                 }
                 GestureMode.LeftDrag -> {
+                    val delta = change.position - lastSinglePosition
                     lastSinglePosition = change.position
-                    onPointer(PointerButtons.LEFT, transform.toRemote(change.position))
+                    val server = if (trackpad) target.moveCursorBy(delta) else target.resolveDirect(change.position)
+                    target.send(PointerButtons.LEFT, server)
                 }
                 GestureMode.TwoFinger -> {
                     // A finger lifted mid-two-finger gesture; stop interpreting.

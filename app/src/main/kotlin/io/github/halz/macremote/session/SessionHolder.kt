@@ -4,6 +4,7 @@ import io.github.halz.macremote.data.Profile
 import io.github.halz.macremote.rfb.RfbAuthException
 import io.github.halz.macremote.rfb.client.RfbClient
 import io.github.halz.macremote.rfb.client.RfbEvent
+import io.github.halz.macremote.rfb.keysym.Keysyms
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -39,6 +40,10 @@ class VncSession(
     private val _frame = MutableStateFlow(0L)
     val frame: StateFlow<Long> = _frame
 
+    /** Latest text the Mac put on its clipboard (ServerCutText, Latin-1 only). */
+    private val _serverClipboard = MutableStateFlow<String?>(null)
+    val serverClipboard: StateFlow<String?> = _serverClipboard
+
     val framebufferBitmap = FramebufferBitmap(client.framebuffer)
 
     // Input events must reach the wire in the order the UI produced them;
@@ -71,6 +76,35 @@ class VncSession(
         inputQueue.trySend { client.sendText(value) }
     }
 
+    /**
+     * Pastes into the Mac. Latin-1 text goes via the VNC clipboard plus Cmd+V;
+     * anything else (Japanese etc.) is typed out as Unicode key events, since
+     * the RFB cut-text message is Latin-1 only.
+     */
+    fun paste(value: String) {
+        if (value.isEmpty()) return
+        val isLatin1 = value.all { it.code in 0..0xFF }
+        if (isLatin1) {
+            inputQueue.trySend {
+                client.sendCutText(value)
+                client.sendKey(Keysyms.SUPER_L, true)
+                client.sendKey('v'.code, true)
+                client.sendKey('v'.code, false)
+                client.sendKey(Keysyms.SUPER_L, false)
+            }
+        } else {
+            text(value)
+        }
+    }
+
+    /** Downsampling factor for the display bitmap (1 = full resolution). */
+    fun setDisplayDivisor(value: Int) {
+        inputQueue.trySend {
+            framebufferBitmap.setDivisor(value)
+            _frame.value++
+        }
+    }
+
     private val job: Job = scope.launch(Dispatchers.IO) {
         // UNDISPATCHED: the subscription must exist before run() can emit
         // Connected, or a replay-1 flow could drop it behind a later event.
@@ -89,7 +123,8 @@ class VncSession(
                         framebufferBitmap.apply(event.rects)
                         _frame.value++
                     }
-                    is RfbEvent.Bell, is RfbEvent.ServerCutText -> Unit
+                    is RfbEvent.ServerCutText -> _serverClipboard.value = event.text
+                    is RfbEvent.Bell -> Unit
                 }
             }
         }

@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import io.github.halz.macremote.data.AppSettings
 import io.github.halz.macremote.data.ProfileRepository
 import io.github.halz.macremote.data.SecretStore
 import io.github.halz.macremote.session.SessionHolder
@@ -15,6 +16,7 @@ import io.github.halz.macremote.ui.session.SessionScreen
 fun AppNavGraph(
     profileRepository: ProfileRepository,
     secretStore: SecretStore,
+    settings: AppSettings,
     sessionHolder: SessionHolder,
 ) {
     val navController = rememberNavController()
@@ -47,6 +49,7 @@ fun AppNavGraph(
                 profileId = backStackEntry.arguments?.getString("profileId").orEmpty(),
                 repository = profileRepository,
                 secretStore = secretStore,
+                settings = settings,
                 sessionHolder = sessionHolder,
                 onExit = { navController.popBackStack() },
             )
