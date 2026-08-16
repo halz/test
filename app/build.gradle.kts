@@ -17,6 +17,19 @@ android {
         versionName = "0.1.0"
     }
 
+    // A fixed debug keystore checked into the repo: CI runners are ephemeral,
+    // and per-run auto-generated keys make every APK a signature mismatch that
+    // blocks in-place updates on the device. This key signs nothing sensitive
+    // (debug sideload builds only).
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("keystore/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
