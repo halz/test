@@ -53,6 +53,7 @@ fun ProfileListScreen(
     secretStore: SecretStore,
     onConnect: (Profile) -> Unit,
     onEdit: (String?) -> Unit,
+    onOpenGestureSettings: () -> Unit,
 ) {
     val profiles by repository.profiles.collectAsState(initial = emptyList())
     val context = LocalContext.current
@@ -101,6 +102,13 @@ fun ProfileListScreen(
                     Box {
                         TextButton(onClick = { menuOpen = true }) { Text("⋮") }
                         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                            DropdownMenuItem(
+                                text = { Text("ジェスチャ設定") },
+                                onClick = {
+                                    menuOpen = false
+                                    onOpenGestureSettings()
+                                },
+                            )
                             DropdownMenuItem(
                                 text = { Text("設定をエクスポート") },
                                 onClick = {

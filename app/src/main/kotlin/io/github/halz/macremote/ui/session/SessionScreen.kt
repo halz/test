@@ -45,9 +45,12 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import io.github.halz.macremote.data.AppSettings
 import io.github.halz.macremote.data.DisplayScale
+import io.github.halz.macremote.data.GestureAction
+import io.github.halz.macremote.data.GestureTrigger
 import io.github.halz.macremote.data.ProfileRepository
 import io.github.halz.macremote.data.SecretStore
 import io.github.halz.macremote.rfb.keysym.Keysyms
+import io.github.halz.macremote.rfb.messages.PointerButtons
 import io.github.halz.macremote.session.SessionHolder
 import io.github.halz.macremote.session.SessionState
 import io.github.halz.macremote.session.VncSession
@@ -189,7 +192,11 @@ private fun ConnectedContent(
     // One-shot modifiers applied to the next key or typed character.
     var modifiers by remember { mutableStateOf(setOf<Int>()) }
 
-    val trackpad by settings.trackpadMode.collectAsState(initial = false)
+    // Held as State (not plain values) so the remembered gesture callback
+    // below reads live settings without being re-created on every change.
+    val trackpadState = settings.trackpadMode.collectAsState(initial = false)
+    val gesturesState = settings.gestures.collectAsState(initial = emptyMap())
+    val trackpad by trackpadState
     val displayScale by settings.displayScale.collectAsState(initial = DisplayScale.AUTO)
 
     val frameState = session.frame.collectAsState()
@@ -285,6 +292,44 @@ private fun ConnectedContent(
         return current
     }
 
+    // Stable across recompositions (everything it touches is snapshot state or
+    // remembered), so multi-touch detection is never restarted mid-gesture.
+    val onGesture: (GestureTrigger, Offset) -> Unit = remember(session, transform, pointerTarget) {
+        { trigger: GestureTrigger, viewPosition: Offset ->
+            when (gesturesState.value[trigger] ?: trigger.default) {
+                GestureAction.NONE -> Unit
+                GestureAction.MISSION_CONTROL -> session.keyPress(Keysyms.UP, listOf(Keysyms.CONTROL_L))
+                GestureAction.APP_EXPOSE -> session.keyPress(Keysyms.DOWN, listOf(Keysyms.CONTROL_L))
+                GestureAction.SPACE_LEFT -> session.keyPress(Keysyms.LEFT, listOf(Keysyms.CONTROL_L))
+                GestureAction.SPACE_RIGHT -> session.keyPress(Keysyms.RIGHT, listOf(Keysyms.CONTROL_L))
+                GestureAction.SHOW_DESKTOP -> session.keyPress(Keysyms.F11)
+                GestureAction.APP_SWITCHER -> session.keyPress(Keysyms.TAB, listOf(Keysyms.SUPER_L))
+                GestureAction.SPOTLIGHT -> session.keyPress(' '.code, listOf(Keysyms.SUPER_L))
+                GestureAction.COPY -> session.keyPress('c'.code, listOf(Keysyms.SUPER_L))
+                GestureAction.PASTE_REMOTE -> session.keyPress('v'.code, listOf(Keysyms.SUPER_L))
+                GestureAction.SCREENSHOT ->
+                    session.keyPress('4'.code, listOf(Keysyms.SUPER_L, Keysyms.SHIFT_L))
+                GestureAction.BACK -> session.keyPress('['.code, listOf(Keysyms.SUPER_L))
+                GestureAction.FORWARD -> session.keyPress(']'.code, listOf(Keysyms.SUPER_L))
+                GestureAction.MINIMIZE -> session.keyPress('m'.code, listOf(Keysyms.SUPER_L))
+                GestureAction.CLOSE_WINDOW -> session.keyPress('w'.code, listOf(Keysyms.SUPER_L))
+                GestureAction.RIGHT_CLICK -> {
+                    val p = if (trackpadState.value) pointerTarget.cursor()
+                    else pointerTarget.resolveDirect(viewPosition)
+                    pointerTarget.send(0, p)
+                    pointerTarget.send(PointerButtons.RIGHT, p)
+                    pointerTarget.send(0, p)
+                }
+                GestureAction.TOGGLE_KEYBOARD -> { keyboardActive = !keyboardActive }
+                GestureAction.TOGGLE_TRACKPAD ->
+                    scope.launch { settings.setTrackpadMode(!trackpadState.value) }
+                GestureAction.PASTE_FROM_ANDROID -> clipboard.getText()?.text?.let { session.paste(it) }
+                GestureAction.FIT -> transform.fit()
+                GestureAction.FILL -> transform.fill()
+            }
+        }
+    }
+
     // imePadding shrinks the canvas above the soft keyboard; onSizeChanged then
     // re-fits, so the remote screen stays fully visible while typing.
     Box(Modifier.fillMaxSize().imePadding()) {
@@ -298,7 +343,7 @@ private fun ConnectedContent(
                     transform.remoteSize = IntSize(bitmap.width, bitmap.height)
                     if (transform.userZoomed) transform.clampOffset() else transform.fit()
                 }
-                .vncGestures(transform, pointerTarget),
+                .vncGestures(transform, pointerTarget, onGesture),
         ) {
             frameState.value // snapshot read: redraw whenever a framebuffer update lands
             withTransform({

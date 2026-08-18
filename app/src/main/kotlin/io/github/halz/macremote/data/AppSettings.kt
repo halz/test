@@ -36,4 +36,22 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
     suspend fun setTrackpadMode(value: Boolean) {
         dataStore.edit { it[trackpadKey] = value }
     }
+
+    private fun gestureKey(trigger: GestureTrigger) = stringPreferencesKey("gesture_${trigger.name}")
+
+    /** Every gesture with its bound command; unset gestures fall back to their default. */
+    val gestures: Flow<Map<GestureTrigger, GestureAction>> = dataStore.data.map { prefs ->
+        GestureTrigger.entries.associateWith { trigger ->
+            prefs[gestureKey(trigger)]?.let { name -> GestureAction.entries.find { it.name == name } }
+                ?: trigger.default
+        }
+    }
+
+    suspend fun setGesture(trigger: GestureTrigger, action: GestureAction) {
+        dataStore.edit { it[gestureKey(trigger)] = action.name }
+    }
+
+    suspend fun resetGestures() {
+        dataStore.edit { prefs -> GestureTrigger.entries.forEach { prefs.remove(gestureKey(it)) } }
+    }
 }

@@ -21,6 +21,8 @@ object Keysyms {
     const val PAGE_DOWN = 0xFF56
     const val END = 0xFF57
     const val DELETE = 0xFFFF
+    /** macOS "show desktop" default shortcut. */
+    const val F11 = 0xFFC8
     const val SHIFT_L = 0xFFE1
     const val CONTROL_L = 0xFFE3
     /** macOS Command key. */

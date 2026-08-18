@@ -6,6 +6,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.PointerEvent
 import androidx.compose.ui.input.pointer.pointerInput
+import io.github.halz.macremote.data.GestureTrigger
 import io.github.halz.macremote.rfb.messages.PointerButtons
 import kotlin.math.abs
 
@@ -27,6 +28,9 @@ import kotlin.math.abs
  * Both modes:
  *  - two-finger vertical drag-> scroll wheel
  *  - two-finger pinch        -> zoom (centroid-anchored) + pan
+ *  - two-finger tap and every three/four-finger swipe or tap -> the command
+ *    bound to that [GestureTrigger] in settings, reported through [onGesture]
+ *    along with the view-space centroid of the fingers that performed it
  */
 interface PointerTarget {
     /** True when relative (trackpad) mode is active. */
@@ -48,7 +52,8 @@ interface PointerTarget {
 fun Modifier.vncGestures(
     transform: CanvasTransform,
     target: PointerTarget,
-): Modifier = pointerInput(transform, target) {
+    onGesture: (GestureTrigger, Offset) -> Unit,
+): Modifier = pointerInput(transform, target, onGesture) {
     var lastTapUptime = 0L
     var lastTapPosition = Offset.Zero
 
@@ -58,6 +63,9 @@ fun Modifier.vncGestures(
         val doubleTapWindow = viewConfiguration.doubleTapTimeoutMillis
         val longPressTimeout = viewConfiguration.longPressTimeoutMillis
         val trackpad = target.isTrackpad()
+        // A multi-finger swipe has to clear more than the tap slop, or a
+        // shaky three-finger tap would register as a swipe.
+        val swipeThreshold = 32 * density
 
         val isDoubleTapDrag = down.uptimeMillis - lastTapUptime <= doubleTapWindow &&
             (down.position - lastTapPosition).getDistance() <= slop * 4
@@ -76,6 +84,13 @@ fun Modifier.vncGestures(
         var lastSpan = 0f
         var scrollAccumulator = 0f
         val scrollStepPx = 24 * density
+        // Multi-finger (3+) state. maxPointers is the peak count, since
+        // fingers rarely land on the glass at the same instant.
+        var maxPointers = 1
+        var multiStartCentroid = Offset.Zero
+        // Where the fingers were last seen, so a gesture bound to a click
+        // acts on the spot the user actually touched.
+        var gestureCentroid = down.position
 
         while (true) {
             val event: PointerEvent? = if (mode == GestureMode.Pending) {
@@ -96,6 +111,7 @@ fun Modifier.vncGestures(
             }
             lastEventUptime = event.changes.maxOf { it.uptimeMillis }
             val pressed = event.changes.filter { it.pressed }
+            maxPointers = maxOf(maxPointers, pressed.size)
 
             if (pressed.isEmpty()) {
                 when (mode) {
@@ -115,17 +131,39 @@ fun Modifier.vncGestures(
                         lastTapUptime = lastEventUptime
                         lastTapPosition = lastSinglePosition
                     }
+                    GestureMode.TwoFinger -> {
+                        // Lifted without scrolling or zooming: a two-finger tap.
+                        if (!twoFingerDecided) onGesture(GestureTrigger.TWO_TAP, gestureCentroid)
+                    }
+                    GestureMode.Multi -> tapTrigger(maxPointers)?.let { onGesture(it, gestureCentroid) }
                     else -> Unit
                 }
                 event.changes.forEach { it.consume() }
                 break
             }
 
-            if (pressed.size >= 2 && mode != GestureMode.LeftDrag) {
-                val centroid = Offset(
-                    pressed.sumOf { it.position.x.toDouble() }.toFloat() / pressed.size,
-                    pressed.sumOf { it.position.y.toDouble() }.toFloat() / pressed.size,
-                )
+            val centroid = Offset(
+                pressed.sumOf { it.position.x.toDouble() }.toFloat() / pressed.size,
+                pressed.sumOf { it.position.y.toDouble() }.toFloat() / pressed.size,
+            )
+            gestureCentroid = centroid
+
+            if (pressed.size >= 3 && mode != GestureMode.LeftDrag) {
+                if (mode != GestureMode.Multi) {
+                    // A third finger cancels any two-finger interpretation.
+                    mode = GestureMode.Multi
+                    multiStartCentroid = centroid
+                }
+                val travel = centroid - multiStartCentroid
+                if (travel.getDistance() > swipeThreshold) {
+                    swipeTrigger(maxPointers, travel)?.let { onGesture(it, multiStartCentroid) }
+                    mode = GestureMode.Consumed
+                }
+                event.changes.forEach { it.consume() }
+                continue
+            }
+
+            if (pressed.size >= 2 && mode != GestureMode.LeftDrag && mode != GestureMode.Multi) {
                 val span = (pressed[0].position - pressed[1].position).getDistance()
                 if (mode != GestureMode.TwoFinger) {
                     mode = GestureMode.TwoFinger
@@ -188,8 +226,14 @@ fun Modifier.vncGestures(
                     val server = if (trackpad) target.moveCursorBy(delta) else target.resolveDirect(change.position)
                     target.send(PointerButtons.LEFT, server)
                 }
+                // Fingers rarely leave the glass together, so a tap is decided
+                // as soon as the count drops — not only when it reaches zero.
                 GestureMode.TwoFinger -> {
-                    // A finger lifted mid-two-finger gesture; stop interpreting.
+                    if (!twoFingerDecided) onGesture(GestureTrigger.TWO_TAP, gestureCentroid)
+                    mode = GestureMode.Consumed
+                }
+                GestureMode.Multi -> {
+                    tapTrigger(maxPointers)?.let { onGesture(it, gestureCentroid) }
                     mode = GestureMode.Consumed
                 }
                 GestureMode.Consumed -> Unit
@@ -199,4 +243,31 @@ fun Modifier.vncGestures(
     }
 }
 
-private enum class GestureMode { Pending, Pan, LeftDrag, TwoFinger, Consumed }
+private fun tapTrigger(fingers: Int): GestureTrigger? = when {
+    fingers >= 4 -> GestureTrigger.FOUR_TAP
+    fingers == 3 -> GestureTrigger.THREE_TAP
+    else -> null
+}
+
+private fun swipeTrigger(fingers: Int, travel: Offset): GestureTrigger? {
+    val horizontal = abs(travel.x) > abs(travel.y)
+    return if (fingers >= 4) {
+        when {
+            horizontal && travel.x < 0 -> GestureTrigger.FOUR_LEFT
+            horizontal -> GestureTrigger.FOUR_RIGHT
+            travel.y < 0 -> GestureTrigger.FOUR_UP
+            else -> GestureTrigger.FOUR_DOWN
+        }
+    } else if (fingers == 3) {
+        when {
+            horizontal && travel.x < 0 -> GestureTrigger.THREE_LEFT
+            horizontal -> GestureTrigger.THREE_RIGHT
+            travel.y < 0 -> GestureTrigger.THREE_UP
+            else -> GestureTrigger.THREE_DOWN
+        }
+    } else {
+        null
+    }
+}
+
+private enum class GestureMode { Pending, Pan, LeftDrag, TwoFinger, Multi, Consumed }

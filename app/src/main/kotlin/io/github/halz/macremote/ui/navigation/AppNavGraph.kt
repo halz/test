@@ -12,6 +12,7 @@ import io.github.halz.macremote.ui.files.FileTransferScreen
 import io.github.halz.macremote.ui.profiles.ProfileEditScreen
 import io.github.halz.macremote.ui.profiles.ProfileListScreen
 import io.github.halz.macremote.ui.session.SessionScreen
+import io.github.halz.macremote.ui.settings.GestureSettingsScreen
 
 @Composable
 fun AppNavGraph(
@@ -34,6 +35,7 @@ fun AppNavGraph(
                     }
                 },
                 onEdit = { id -> navController.navigate(if (id == null) "edit" else "edit?id=$id") },
+                onOpenGestureSettings = { navController.navigate("settings/gestures") },
             )
         }
         composable("edit?id={id}") { backStackEntry ->
@@ -61,6 +63,12 @@ fun AppNavGraph(
                 sessionHolder = sessionHolder,
                 onOpenFiles = { id -> navController.navigate("files/$id") },
                 onExit = { navController.popBackStack() },
+            )
+        }
+        composable("settings/gestures") {
+            GestureSettingsScreen(
+                settings = settings,
+                onBack = { navController.popBackStack() },
             )
         }
         composable("files/{profileId}") { backStackEntry ->
