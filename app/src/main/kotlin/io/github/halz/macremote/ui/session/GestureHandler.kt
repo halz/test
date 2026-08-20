@@ -82,8 +82,13 @@ fun Modifier.vncGestures(
         var twoFingerZoom = false
         var lastCentroid = Offset.Zero
         var lastSpan = 0f
+        // Where the two fingers started: scroll-vs-zoom is decided on travel
+        // since then, because a single frame of a normal-speed scroll moves
+        // only a few pixels — far below the tap slop.
+        var twoFingerStartCentroid = Offset.Zero
+        var twoFingerStartSpan = 0f
         var scrollAccumulator = 0f
-        val scrollStepPx = 24 * density
+        val scrollStepPx = 16 * density
         // Multi-finger (3+) state. maxPointers is the peak count, since
         // fingers rarely land on the glass at the same instant.
         var maxPointers = 1
@@ -170,12 +175,19 @@ fun Modifier.vncGestures(
                     twoFingerDecided = false
                     lastCentroid = centroid
                     lastSpan = span
+                    twoFingerStartCentroid = centroid
+                    twoFingerStartSpan = span
                     scrollAccumulator = 0f
                 } else {
                     if (!twoFingerDecided) {
-                        when {
-                            abs(span - lastSpan) > slop -> { twoFingerDecided = true; twoFingerZoom = true }
-                            (centroid - lastCentroid).getDistance() > slop -> { twoFingerDecided = true; twoFingerZoom = false }
+                        val spread = abs(span - twoFingerStartSpan)
+                        val travel = (centroid - twoFingerStartCentroid).getDistance()
+                        // Whichever passes the slop first wins; spreading the
+                        // fingers also moves the centroid a little, so compare
+                        // the two once either is past the threshold.
+                        if (spread > slop || travel > slop) {
+                            twoFingerDecided = true
+                            twoFingerZoom = spread > travel
                         }
                     }
                     if (twoFingerDecided) {
