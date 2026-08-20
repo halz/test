@@ -1,5 +1,6 @@
 package io.github.halz.macremote.session
 
+import android.content.Context
 import io.github.halz.macremote.data.Profile
 import io.github.halz.macremote.rfb.RfbAuthException
 import io.github.halz.macremote.rfb.client.RfbClient
@@ -160,7 +161,7 @@ class VncSession(
  * instead of reconnecting. A finished (failed/closed) session stays listed —
  * its tab shows the error until retried or closed.
  */
-class SessionHolder(private val appScope: CoroutineScope) {
+class SessionHolder(private val appScope: CoroutineScope, private val context: Context) {
 
     private val _sessions = MutableStateFlow<List<VncSession>>(emptyList())
     val sessions: StateFlow<List<VncSession>> = _sessions
@@ -170,7 +171,11 @@ class SessionHolder(private val appScope: CoroutineScope) {
             existing.close()
             _sessions.value = _sessions.value - existing
         }
-        return VncSession(profile, password, appScope).also { _sessions.value = _sessions.value + it }
+        return VncSession(profile, password, appScope).also {
+            _sessions.value = _sessions.value + it
+            // Keep the process alive in the background while anything is connected.
+            SessionService.start(context)
+        }
     }
 
     fun sessionFor(profileId: String): VncSession? =
@@ -181,5 +186,6 @@ class SessionHolder(private val appScope: CoroutineScope) {
             session.close()
             _sessions.value = _sessions.value - session
         }
+        if (_sessions.value.isEmpty()) SessionService.stop(context)
     }
 }

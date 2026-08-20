@@ -15,5 +15,5 @@ class App : Application() {
     val profileRepository by lazy { ProfileRepository(profileDataStore) }
     val secretStore by lazy { SecretStore(profileDataStore) }
     val appSettings by lazy { AppSettings(profileDataStore) }
-    val sessionHolder by lazy { SessionHolder(appScope) }
+    val sessionHolder by lazy { SessionHolder(appScope, this) }
 }

@@ -127,6 +127,7 @@ fun SessionScreen(
                 session = currentSession,
                 settings = settings,
                 onOpenFiles = { onOpenFiles(currentId) },
+                onBackToList = onExit,
                 onDisconnect = { closeTab(currentId) },
             )
         }
@@ -182,6 +183,7 @@ private fun ConnectedContent(
     session: VncSession,
     settings: AppSettings,
     onOpenFiles: () -> Unit,
+    onBackToList: () -> Unit,
     onDisconnect: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -397,6 +399,9 @@ private fun ConnectedContent(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         TextButton(onClick = onDisconnect) { Text("切断") }
+                        // Back to the list with the connection kept alive, so
+                        // another Mac can be opened as a second tab.
+                        TextButton(onClick = onBackToList) { Text("一覧") }
                         TextButton(onClick = { keyboardActive = !keyboardActive }) {
                             Text(if (keyboardActive) "⌨✓" else "⌨")
                         }

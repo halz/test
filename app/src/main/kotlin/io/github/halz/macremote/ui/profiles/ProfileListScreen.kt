@@ -32,12 +32,15 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import io.github.halz.macremote.data.Profile
 import io.github.halz.macremote.data.ProfileRepository
 import io.github.halz.macremote.data.ProfileTransfer
 import io.github.halz.macremote.data.SecretStore
+import io.github.halz.macremote.session.SessionHolder
+import io.github.halz.macremote.session.SessionState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -51,11 +54,13 @@ import kotlinx.coroutines.withContext
 fun ProfileListScreen(
     repository: ProfileRepository,
     secretStore: SecretStore,
+    sessionHolder: SessionHolder,
     onConnect: (Profile) -> Unit,
     onEdit: (String?) -> Unit,
     onOpenGestureSettings: () -> Unit,
 ) {
     val profiles by repository.profiles.collectAsState(initial = emptyList())
+    val sessions by sessionHolder.sessions.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var menuOpen by remember { mutableStateOf(false) }
@@ -153,7 +158,15 @@ fun ProfileListScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 items(profiles, key = { it.id }) { profile ->
-                    ProfileCard(profile, onConnect = { onConnect(profile) }, onEdit = { onEdit(profile.id) })
+                    val connected = sessions.any {
+                        it.profile.id == profile.id && it.state.value is SessionState.Connected
+                    }
+                    ProfileCard(
+                        profile,
+                        connected = connected,
+                        onConnect = { onConnect(profile) },
+                        onEdit = { onEdit(profile.id) },
+                    )
                 }
             }
         }
@@ -161,10 +174,19 @@ fun ProfileListScreen(
 }
 
 @Composable
-private fun ProfileCard(profile: Profile, onConnect: () -> Unit, onEdit: () -> Unit) {
+private fun ProfileCard(
+    profile: Profile,
+    connected: Boolean,
+    onConnect: () -> Unit,
+    onEdit: () -> Unit,
+) {
     Card(onClick = onConnect) {
         Column(Modifier.fillMaxWidth().padding(16.dp)) {
-            Text(profile.name.ifEmpty { profile.host }, style = MaterialTheme.typography.titleMedium)
+            Text(
+                profile.name.ifEmpty { profile.host } + if (connected) "　● 接続中" else "",
+                style = MaterialTheme.typography.titleMedium,
+                color = if (connected) MaterialTheme.colorScheme.primary else Color.Unspecified,
+            )
             Text(
                 "${profile.host}:${profile.port}" +
                     if (profile.username.isNotEmpty()) "（${profile.username}）" else "",

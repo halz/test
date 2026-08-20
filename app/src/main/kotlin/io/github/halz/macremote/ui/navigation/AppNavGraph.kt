@@ -27,6 +27,7 @@ fun AppNavGraph(
             ProfileListScreen(
                 repository = profileRepository,
                 secretStore = secretStore,
+                sessionHolder = sessionHolder,
                 onConnect = { profile ->
                     // Keep at most one session screen on the stack; live
                     // sessions themselves are owned by SessionHolder.

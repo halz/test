@@ -88,7 +88,7 @@ fun Modifier.vncGestures(
         var twoFingerStartCentroid = Offset.Zero
         var twoFingerStartSpan = 0f
         var scrollAccumulator = 0f
-        val scrollStepPx = 16 * density
+        val scrollStepPx = 8 * density
         // Multi-finger (3+) state. maxPointers is the peak count, since
         // fingers rarely land on the glass at the same instant.
         var maxPointers = 1
