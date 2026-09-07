@@ -11,6 +11,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -187,5 +188,30 @@ class SessionHolder(private val appScope: CoroutineScope, private val context: C
             _sessions.value = _sessions.value - session
         }
         if (_sessions.value.isEmpty()) SessionService.stop(context)
+    }
+
+    fun closeAll() {
+        _sessions.value.forEach { it.close() }
+        _sessions.value = emptyList()
+        SessionService.stop(context)
+    }
+
+    /** Minutes the app may stay backgrounded before sessions close; 0 = never. */
+    @Volatile
+    var idleTimeoutMinutes: Int = 15
+
+    private var idleJob: Job? = null
+
+    fun onAppForeground() {
+        idleJob?.cancel()
+        idleJob = null
+    }
+
+    fun onAppBackground() {
+        if (idleTimeoutMinutes <= 0 || _sessions.value.isEmpty()) return
+        idleJob = appScope.launch {
+            delay(idleTimeoutMinutes * 60_000L)
+            closeAll()
+        }
     }
 }

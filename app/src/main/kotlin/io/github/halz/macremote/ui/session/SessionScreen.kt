@@ -6,9 +6,12 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -76,11 +79,18 @@ fun SessionScreen(
     var currentId by rememberSaveable { mutableStateOf(profileId) }
     var startFailed by remember { mutableStateOf<String?>(null) }
     var retryToken by remember { mutableStateOf(0) }
+    // Set when the user disconnects the last tab: the screen keeps composing
+    // during the exit transition, and the reconnect effect below must not
+    // resurrect the session that was just closed.
+    var exiting by remember { mutableStateOf(false) }
 
     // (Re)connect when the tab has no session or only a finished one. Coming
     // from the profile list or switching to a dead tab is an intent to
     // connect; a session that fails right after still shows its error pane.
-    LaunchedEffect(currentId, retryToken) {
+    // `sessions` is a key so that returning after the idle timeout closed
+    // everything reconnects automatically instead of spinning forever.
+    LaunchedEffect(currentId, retryToken, sessions) {
+        if (exiting) return@LaunchedEffect
         startFailed = null
         val existing = sessionHolder.sessionFor(currentId)
         val finished = existing != null &&
@@ -100,7 +110,12 @@ fun SessionScreen(
         sessionHolder.close(id)
         if (id == currentId) {
             val remaining = sessionHolder.sessions.value.firstOrNull()
-            if (remaining != null) currentId = remaining.profile.id else onExit()
+            if (remaining != null) {
+                currentId = remaining.profile.id
+            } else {
+                exiting = true
+                onExit()
+            }
         }
     }
 
@@ -178,6 +193,7 @@ private fun SessionTabs(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ConnectedContent(
     session: VncSession,
@@ -200,6 +216,14 @@ private fun ConnectedContent(
     val gesturesState = settings.gestures.collectAsState(initial = emptyMap())
     val trackpad by trackpadState
     val displayScale by settings.displayScale.collectAsState(initial = DisplayScale.AUTO)
+
+    // The user can dismiss the IME with the system back/swipe, which never
+    // goes through the toolbar button — follow the real visibility so the
+    // button state can't stick at "shown".
+    val imeVisible = WindowInsets.isImeVisible
+    LaunchedEffect(imeVisible) {
+        if (!imeVisible) keyboardActive = false
+    }
 
     val frameState = session.frame.collectAsState()
     val fb = session.client.framebuffer
@@ -402,9 +426,6 @@ private fun ConnectedContent(
                         // Back to the list with the connection kept alive, so
                         // another Mac can be opened as a second tab.
                         TextButton(onClick = onBackToList) { Text("一覧") }
-                        TextButton(onClick = { keyboardActive = !keyboardActive }) {
-                            Text(if (keyboardActive) "⌨✓" else "⌨")
-                        }
                         FilterChip(
                             selected = trackpad,
                             onClick = { scope.launch { settings.setTrackpadMode(!trackpad) } },
@@ -454,6 +475,9 @@ private fun ConnectedContent(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                TextButton(onClick = { keyboardActive = !keyboardActive }) {
+                    Text(if (keyboardActive) "⌨✓" else "⌨")
+                }
                 ModifierChip("⌘", Keysyms.SUPER_L, modifiers) { modifiers = it }
                 ModifierChip("⌃", Keysyms.CONTROL_L, modifiers) { modifiers = it }
                 ModifierChip("⌥", Keysyms.ALT_L, modifiers) { modifiers = it }

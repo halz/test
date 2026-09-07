@@ -17,6 +17,15 @@ enum class DisplayScale(val label: String, val divisor: Int?) {
     THIRD("1/3", 3),
 }
 
+/** How long the app may sit in the background before sessions are closed. */
+enum class IdleTimeout(val label: String, val minutes: Int) {
+    M5("5分", 5),
+    M15("15分", 15),
+    M30("30分", 30),
+    M60("60分", 60),
+    OFF("なし (切断しない)", 0),
+}
+
 /** Session-behavior settings, shared across profiles. */
 class AppSettings(private val dataStore: DataStore<Preferences>) {
 
@@ -35,6 +44,16 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
 
     suspend fun setTrackpadMode(value: Boolean) {
         dataStore.edit { it[trackpadKey] = value }
+    }
+
+    private val idleTimeoutKey = stringPreferencesKey("idle_timeout")
+
+    val idleTimeout: Flow<IdleTimeout> = dataStore.data.map { prefs ->
+        prefs[idleTimeoutKey]?.let { name -> IdleTimeout.entries.find { it.name == name } } ?: IdleTimeout.M15
+    }
+
+    suspend fun setIdleTimeout(value: IdleTimeout) {
+        dataStore.edit { it[idleTimeoutKey] = value.name }
     }
 
     private fun gestureKey(trigger: GestureTrigger) = stringPreferencesKey("gesture_${trigger.name}")

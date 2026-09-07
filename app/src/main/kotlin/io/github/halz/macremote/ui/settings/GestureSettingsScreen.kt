@@ -29,9 +29,10 @@ import androidx.compose.ui.unit.dp
 import io.github.halz.macremote.data.AppSettings
 import io.github.halz.macremote.data.GestureAction
 import io.github.halz.macremote.data.GestureTrigger
+import io.github.halz.macremote.data.IdleTimeout
 import kotlinx.coroutines.launch
 
-/** Binds each multi-touch gesture to the command it should send. */
+/** App settings: the idle timeout plus each gesture's bound command. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GestureSettingsScreen(
@@ -40,11 +41,12 @@ fun GestureSettingsScreen(
 ) {
     val scope = rememberCoroutineScope()
     val gestures by settings.gestures.collectAsState(initial = emptyMap())
+    val idleTimeout by settings.idleTimeout.collectAsState(initial = IdleTimeout.M15)
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("ジェスチャ設定") },
+                title = { Text("設定") },
                 navigationIcon = { TextButton(onClick = onBack) { Text("戻る") } },
                 actions = {
                     TextButton(onClick = { scope.launch { settings.resetGestures() } }) { Text("既定に戻す") }
@@ -53,6 +55,16 @@ fun GestureSettingsScreen(
         },
     ) { innerPadding ->
         LazyColumn(Modifier.fillMaxSize().padding(innerPadding)) {
+            item(key = "idle") {
+                OptionRow(
+                    title = "バックグラウンドで自動切断",
+                    subtitle = idleTimeout.label,
+                    options = IdleTimeout.entries.map { it.label },
+                    selectedIndex = IdleTimeout.entries.indexOf(idleTimeout),
+                    onSelect = { scope.launch { settings.setIdleTimeout(IdleTimeout.entries[it]) } },
+                )
+                HorizontalDivider()
+            }
             item(key = "header") {
                 Text(
                     "画面を 2〜4 本指で操作したときに Mac へ送るコマンドを選べます。" +
@@ -80,6 +92,23 @@ private fun GestureRow(
     action: GestureAction,
     onSelect: (GestureAction) -> Unit,
 ) {
+    OptionRow(
+        title = trigger.label,
+        subtitle = action.label,
+        options = GestureAction.entries.map { it.label },
+        selectedIndex = GestureAction.entries.indexOf(action),
+        onSelect = { onSelect(GestureAction.entries[it]) },
+    )
+}
+
+@Composable
+private fun OptionRow(
+    title: String,
+    subtitle: String,
+    options: List<String>,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit,
+) {
     var menuOpen by remember { mutableStateOf(false) }
     Box {
         Column(
@@ -88,16 +117,16 @@ private fun GestureRow(
                 .clickable { menuOpen = true }
                 .padding(horizontal = 16.dp, vertical = 12.dp),
         ) {
-            Text(trigger.label, style = MaterialTheme.typography.bodyLarge)
-            Text(action.label, style = MaterialTheme.typography.bodyMedium)
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(subtitle, style = MaterialTheme.typography.bodyMedium)
         }
         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-            GestureAction.entries.forEach { option ->
+            options.forEachIndexed { index, label ->
                 DropdownMenuItem(
-                    text = { Text(if (option == action) "✓ ${option.label}" else option.label) },
+                    text = { Text(if (index == selectedIndex) "✓ $label" else label) },
                     onClick = {
                         menuOpen = false
-                        onSelect(option)
+                        onSelect(index)
                     },
                 )
             }

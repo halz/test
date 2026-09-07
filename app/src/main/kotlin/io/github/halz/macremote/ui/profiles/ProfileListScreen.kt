@@ -108,7 +108,7 @@ fun ProfileListScreen(
                         TextButton(onClick = { menuOpen = true }) { Text("⋮") }
                         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                             DropdownMenuItem(
-                                text = { Text("ジェスチャ設定") },
+                                text = { Text("設定") },
                                 onClick = {
                                     menuOpen = false
                                     onOpenGestureSettings()

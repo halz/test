@@ -24,12 +24,18 @@ import androidx.compose.ui.unit.dp
 import io.github.halz.macremote.rfb.keysym.Keysyms
 
 /**
- * Invisible text field that turns IME output into key events.
+ * Invisible text field that mirrors IME output to the Mac as key events.
  *
  * The field is seeded with one space so that backspace on an "empty" field
- * still produces a text change. While the IME is composing (Japanese input),
- * changes are held back; only committed text is diffed and sent — kanji and
- * kana go over the wire as Unicode keysyms (best effort, see README).
+ * still produces a text change. The field is synchronized by diffing against
+ * [sent] — exactly what the Mac has already received — on every change,
+ * including in-progress composition: predictive keyboards (which keep even
+ * plain Latin typing in a composing region until a suggestion commits) type
+ * immediately, and a Japanese conversion converges via backspaces. Because
+ * the diff base is what was actually sent, a duplicate commit callback from
+ * the IME produces an empty diff instead of double-typed text. The buffer is
+ * only reset when it empties or grows large — never on every commit — since
+ * resets restart the IME and were the source of duplicated input.
  */
 @Composable
 fun KeyInputBridge(
@@ -37,9 +43,8 @@ fun KeyInputBridge(
     onText: (String) -> Unit,
     onKeysym: (Int) -> Unit,
 ) {
-    val seed = TextFieldValue(SEED_TEXT, TextRange(SEED_TEXT.length))
-    var field by remember { mutableStateOf(seed) }
-    var committed by remember { mutableStateOf(SEED_TEXT) }
+    var field by remember { mutableStateOf(seedValue()) }
+    var sent by remember { mutableStateOf(SEED_TEXT) }
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
 
@@ -56,17 +61,20 @@ fun KeyInputBridge(
     BasicTextField(
         value = field,
         onValueChange = { new ->
-            if (new.composition != null) {
-                field = new
-                return@BasicTextField
-            }
+            field = new
             val newText = new.text
             var prefix = 0
-            while (prefix < committed.length && prefix < newText.length && committed[prefix] == newText[prefix]) prefix++
-            repeat(committed.length - prefix) { onKeysym(Keysyms.BACKSPACE) }
+            while (prefix < sent.length && prefix < newText.length && sent[prefix] == newText[prefix]) prefix++
+            repeat(sent.length - prefix) { onKeysym(Keysyms.BACKSPACE) }
             if (newText.length > prefix) onText(newText.substring(prefix))
-            field = seed
-            committed = SEED_TEXT
+            sent = newText
+            // Programmatic resets fire no onValueChange, so nothing is
+            // re-sent; done only outside composition so the IME's composing
+            // region is never yanked out from under it.
+            if (new.composition == null && (newText.isEmpty() || newText.length > TRIM_AT)) {
+                field = seedValue()
+                sent = SEED_TEXT
+            }
         },
         modifier = Modifier
             .size(1.dp)
@@ -89,4 +97,7 @@ fun KeyInputBridge(
     )
 }
 
+private fun seedValue() = TextFieldValue(SEED_TEXT, TextRange(SEED_TEXT.length))
+
 private const val SEED_TEXT = " "
+private const val TRIM_AT = 64
