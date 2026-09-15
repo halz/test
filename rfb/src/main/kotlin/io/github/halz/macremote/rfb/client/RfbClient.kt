@@ -160,8 +160,14 @@ class RfbClient(
             while (i < text.length) {
                 val codePoint = text.codePointAt(i)
                 val keysym = Keysyms.forCodePoint(codePoint)
+                // macOS Screen Sharing maps keysyms to hardware keycodes and
+                // takes letter case from the live Shift state, not from the
+                // keysym itself — uppercase must be typed with Shift held.
+                val shift = Character.isUpperCase(codePoint)
+                if (shift) ClientMessages.keyEvent(sock, true, Keysyms.SHIFT_L)
                 ClientMessages.keyEvent(sock, true, keysym)
                 ClientMessages.keyEvent(sock, false, keysym)
+                if (shift) ClientMessages.keyEvent(sock, false, Keysyms.SHIFT_L)
                 i += Character.charCount(codePoint)
             }
         }
