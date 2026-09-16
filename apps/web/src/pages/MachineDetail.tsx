@@ -5,8 +5,10 @@ import type { FleetState } from "../hooks";
 import { Badge, ErrorBox, Meter, StatusDot, osIcon, useAsync } from "../components/ui";
 import { OPS_LABELS, type OpsKind } from "../types";
 import { JobView } from "./Ops";
+import { ModelsTab } from "./machine/ModelsTab";
+import { ProfilesTab } from "./machine/ProfilesTab";
 
-type Tab = "overview" | "logs" | "sessions" | "cron" | "config" | "ops";
+type Tab = "overview" | "models" | "profiles" | "logs" | "sessions" | "cron" | "config" | "ops";
 
 export function MachineDetail({ fleet }: { fleet: FleetState }) {
   const { id = "" } = useParams();
@@ -28,8 +30,8 @@ export function MachineDetail({ fleet }: { fleet: FleetState }) {
       </div>
       {snap.alerts.length ? <div className="stack" style={{ marginBottom: 12 }}>{snap.alerts.map((a) => <div key={a.code} className={`alert ${a.level === "error" ? "err" : ""}`}>{a.message}</div>)}</div> : null}
       <div className="tabs">
-        {(["overview", "logs", "sessions", "cron", "config", "ops"] as Tab[]).map((t) => (
-          <button key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>{{ overview: "概要", logs: "ログ", sessions: "セッション", cron: "cron", config: "設定", ops: "操作" }[t]}</button>
+        {(["overview", "models", "profiles", "logs", "sessions", "cron", "config", "ops"] as Tab[]).map((t) => (
+          <button key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>{{ overview: "概要", models: "モデル・プロバイダ", profiles: "プロファイル", logs: "ログ", sessions: "セッション", cron: "cron", config: "設定", ops: "操作" }[t]}</button>
         ))}
       </div>
       {tab === "overview" ? (
@@ -64,6 +66,8 @@ export function MachineDetail({ fleet }: { fleet: FleetState }) {
           </div>
         </div>
       ) : null}
+      {tab === "models" ? <ModelsTab id={id} /> : null}
+      {tab === "profiles" ? <ProfilesTab id={id} /> : null}
       {tab === "logs" ? <LogsTab id={id} /> : null}
       {tab === "sessions" ? <SessionsTab id={id} /> : null}
       {tab === "cron" ? <CronTab id={id} /> : null}

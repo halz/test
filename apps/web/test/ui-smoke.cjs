@@ -13,10 +13,14 @@ const B = process.env.FLEET_URL ?? "http://127.0.0.1:18080";
     // Hosted demo: fixed password, already configured.
     await page.fill("input[type=password] >> nth=0", "demo");
     await page.click("button:has-text('ログイン')");
-  } else {
+  } else if (await page.$("text=パスワード（確認）")) {
     await page.fill("input[type=password] >> nth=0", "correct horse battery");
     await page.fill("input[type=password] >> nth=1", "correct horse battery");
     await page.click("button:has-text('セットアップしてログイン')");
+  } else {
+    // Console already set up by a previous run against the same data dir.
+    await page.fill("input[type=password] >> nth=0", "correct horse battery");
+    await page.click("button:has-text('ログイン')");
   }
   await page.waitForSelector("text=オンライン", { timeout: 10000 });
   await page.waitForFunction(() => document.querySelectorAll(".grid .card").length >= 6, null, { timeout: 15000 });
@@ -35,6 +39,38 @@ const B = process.env.FLEET_URL ?? "http://127.0.0.1:18080";
   await page.screenshot({ path: `${S}/shot-detail-logs.png`, fullPage: true });
   await page.click("button:has-text('cron')");
   await page.waitForSelector("text=Daily summary");
+
+  // models / providers tab (mac-2 has a coder profile)
+  await page.click("nav.nav >> text=フリート");
+  await page.click("text=mac-2");
+  await page.waitForSelector("text=ホスト名");
+  await page.click("button:has-text('モデル・プロバイダ')");
+  await page.waitForSelector("text=メインモデル", { timeout: 10000 });
+  await page.waitForSelector("text=LLM プロバイダの認証");
+  await page.waitForFunction(() => document.querySelectorAll("table tbody tr").length > 5, null, { timeout: 10000 });
+  await page.selectOption("select >> nth=1", "anthropic");
+  await page.fill("input[placeholder='モデル ID'] >> nth=0", "anthropic/claude-haiku-4-5");
+  await page.click("button:has-text('適用')");
+  await page.waitForSelector("text=メインモデルを anthropic / anthropic/claude-haiku-4-5 に設定しました", { timeout: 10000 });
+  await page.click((await page.$("button:has-text('キーを設定')")) ? "button:has-text('キーを設定') >> nth=0" : "button:has-text('キーを更新') >> nth=0");
+  await page.fill("input[type=password]", "sk-test-1234");
+  await page.click("button:has-text('検証して保存')");
+  await page.waitForSelector("button:has-text('検証して保存')", { state: "detached", timeout: 10000 });
+  await page.click("button:has-text('＋ 追加') >> nth=1");
+  await page.waitForSelector("text=ルーティングを保存");
+  await page.click("button:has-text('ルーティングを保存')");
+  await page.waitForSelector("text=ルーティング設定を保存しました", { timeout: 10000 });
+  await page.screenshot({ path: `${S}/shot-models.png`, fullPage: true });
+  await page.click("button:has-text('プロファイル')");
+  await page.waitForSelector("text=coder", { timeout: 10000 });
+  await page.click("button:has-text('＋ プロファイル作成')");
+  await page.fill("input[placeholder='coder']", "writer");
+  await page.click(".modal button.primary:has-text('作成')");
+  await page.waitForSelector("tr:has-text('writer')", { timeout: 10000 });
+  page.once("dialog", (d) => d.accept());
+  await page.click("tr:has-text('writer') >> button:has-text('削除')");
+  await page.waitForSelector("tr:has-text('writer')", { state: "detached", timeout: 10000 });
+  await page.screenshot({ path: `${S}/shot-profiles.png`, fullPage: true });
 
   // prompt
   await page.click("nav.nav >> text=プロンプト");

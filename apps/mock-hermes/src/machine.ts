@@ -389,6 +389,78 @@ export function createMockMachine(o: MockMachineOptions): MockMachineApps {
     return c.json({ ok: true, found: true });
   });
 
+  // ---- models / providers / profiles (dashboard) ----
+  const providerCatalog = [
+    { slug: "anthropic", name: "Anthropic", key_env: "ANTHROPIC_API_KEY", models: ["anthropic/claude-sonnet-5", "anthropic/claude-opus-5", "anthropic/claude-haiku-4-5"] },
+    { slug: "openrouter", name: "OpenRouter", key_env: "OPENROUTER_API_KEY", models: ["anthropic/claude-sonnet-5", "openai/gpt-6-astra", "google/gemini-3-pro", "inclusionai/ring-2.6-1t:free"] },
+    { slug: "openai", name: "OpenAI", key_env: "OPENAI_API_KEY", models: ["openai/gpt-6-astra", "openai/gpt-6-mini"] },
+    { slug: "nous", name: "Nous Portal", key_env: "", models: ["nous-hermes-4"] },
+  ];
+  const customEndpoints: { id: string; name: string; base_url: string; model: string; models: string[] }[] = [];
+  const mainModel = { provider: "anthropic", model: "anthropic/claude-sonnet-5", base_url: "" };
+  const AUX_TASKS = ["vision", "compression", "approval", "web_extraction", "title_generation", "skills_hub_search", "mcp_routing", "triage_specification", "task_decomposition", "profile_description", "curator_review"];
+  const aux: Record<string, { provider: string; model: string; base_url: string; reasoning_effort: string | null }> = Object.fromEntries(AUX_TASKS.map((t) => [t, { provider: "auto", model: "", base_url: "", reasoning_effort: null }]));
+  const profiles: { name: string; path: string; is_default: boolean; model: string | null; provider: string | null; has_env: boolean; skill_count: number; gateway_running: boolean; description: string; display_name: string; soul: string }[] = [
+    { name: "default", path: "~/.hermes", is_default: true, model: mainModel.model, provider: mainModel.provider, has_env: true, skill_count: 14, gateway_running: machine.gatewayRunning, description: "", display_name: "", soul: "You are Hermes, a helpful assistant." },
+    ...(opts.name.endsWith("2") ? [{ name: "coder", path: "~/.hermes/profiles/coder", is_default: false, model: "openai/gpt-6-astra", provider: "openrouter", has_env: true, skill_count: 9, gateway_running: false, description: "Coding agent", display_name: "", soul: "You are a focused coding assistant." }] : []),
+  ];
+  let activeProfile = "default";
+  const providerRows = () => providerCatalog.map((p) => {
+    const authenticated = !p.key_env || p.key_env in envVars;
+    return { slug: p.slug, name: p.name, is_current: p.slug === mainModel.provider, is_user_defined: false, authenticated, auth_type: p.key_env ? "api_key" : "oauth", key_env: p.key_env, models: authenticated ? p.models : [], warning: authenticated ? "" : `paste ${p.key_env} to activate`, source: "canonical" };
+  }).concat(customEndpoints.map((e) => ({ slug: e.id, name: e.name, is_current: e.id === mainModel.provider, is_user_defined: true, authenticated: true, auth_type: "api_key", key_env: `${e.id.toUpperCase().replace(/-/g, "_")}_API_KEY`, models: e.models, warning: "", source: "config" })));
+  dash.get("/api/model/options", (c) => c.json({ providers: providerRows(), current_provider: mainModel.provider, current_model: mainModel.model }));
+  dash.get("/api/model/auxiliary", (c) => c.json({ tasks: AUX_TASKS.map((t) => ({ task: t, ...aux[t], local_endpoint: false })), main: { provider: mainModel.provider, model: mainModel.model } }));
+  dash.post("/api/model/set", async (c) => {
+    const b = await c.req.json();
+    if (!["main", "auxiliary"].includes(b.scope)) return c.json({ detail: "scope must be 'main' or 'auxiliary'" }, 400);
+    if (b.scope === "main") {
+      if (!b.provider || !b.model) return c.json({ detail: "provider and model are required" }, 400);
+      if (/opus/.test(b.model) && !b.confirm_expensive_model) return c.json({ ok: false, scope: "main", provider: b.provider, model: b.model, confirm_required: true, confirm_message: `${b.model} は高価なモデルです。続行しますか？` });
+      Object.assign(mainModel, { provider: b.provider, model: b.model, base_url: b.base_url ?? "" });
+      profiles[0].model = b.model; profiles[0].provider = b.provider;
+      config = deepMerge(config, { model: { provider: b.provider, default: b.model } });
+      return c.json({ ok: true, scope: "main", provider: b.provider, model: b.model });
+    }
+    if (b.task === "__reset__") { for (const t of AUX_TASKS) aux[t] = { provider: "auto", model: "", base_url: "", reasoning_effort: null }; return c.json({ ok: true, scope: "auxiliary", reset: true }); }
+    const tasks = b.task ? [b.task] : AUX_TASKS;
+    for (const t of tasks) { if (!aux[t]) return c.json({ detail: `unknown task ${t}` }, 400); aux[t] = { provider: b.provider || "auto", model: b.model || "", base_url: b.base_url ?? "", reasoning_effort: b.reasoning_effort ?? null }; }
+    return c.json({ ok: true, scope: "auxiliary", task: b.task, provider: b.provider, model: b.model });
+  });
+  dash.get("/api/profiles", (c) => c.json({ profiles: profiles.map(({ soul, ...p }) => ({ ...p, gateway_running: p.is_default ? machine.gatewayRunning : p.gateway_running })) }));
+  dash.post("/api/profiles", async (c) => {
+    const b = await c.req.json();
+    const name = String(b.name ?? "").trim().toLowerCase();
+    if (!/^[a-z][a-z0-9_-]{0,31}$/.test(name)) return c.json({ detail: "invalid profile name" }, 400);
+    if (profiles.some((p) => p.name === name)) return c.json({ detail: `profile '${name}' already exists` }, 400);
+    const src = profiles.find((p) => p.name === (b.clone_from || "default")) ?? profiles[0];
+    profiles.push({ name, path: `~/.hermes/profiles/${name}`, is_default: false, model: b.model || (b.clone_from ? src.model : null), provider: b.provider || (b.clone_from ? src.provider : null), has_env: Boolean(b.clone_from), skill_count: b.no_skills ? 0 : src.skill_count, gateway_running: false, description: b.description ?? "", display_name: "", soul: b.clone_from ? src.soul : "" });
+    return c.json({ ok: true, name, path: `~/.hermes/profiles/${name}`, model_set: Boolean(b.provider && b.model), model_error: "", mcp_written: 0, skills_disabled: 0, hub_installs: [] });
+  });
+  dash.get("/api/profiles/active", (c) => c.json({ active: activeProfile, current: "default" }));
+  dash.post("/api/profiles/active", async (c) => { const b = await c.req.json(); if (!profiles.some((p) => p.name === b.name)) return c.json({ detail: "profile not found" }, 404); activeProfile = b.name; return c.json({ ok: true, active: b.name }); });
+  dash.patch("/api/profiles/:name", async (c) => { const p = profiles.find((x) => x.name === c.req.param("name")); if (!p) return c.json({ detail: "not found" }, 404); const b = await c.req.json(); if (p.is_default) { p.display_name = b.new_name; return c.json({ ok: true, name: "default", display_name: b.new_name, path: p.path }); } p.name = String(b.new_name).toLowerCase(); return c.json({ ok: true, name: p.name, path: p.path }); });
+  dash.delete("/api/profiles/:name", (c) => { const i = profiles.findIndex((x) => x.name === c.req.param("name")); if (i < 0) return c.json({ detail: "not found" }, 404); if (profiles[i].is_default) return c.json({ detail: "cannot delete the default profile" }, 400); const [p] = profiles.splice(i, 1); if (activeProfile === p.name) activeProfile = "default"; return c.json({ ok: true, path: p.path }); });
+  dash.put("/api/profiles/:name/model", async (c) => { const p = profiles.find((x) => x.name === c.req.param("name")); if (!p) return c.json({ detail: "not found" }, 404); const b = await c.req.json(); if (!b.provider || !b.model) return c.json({ detail: "provider and model are required" }, 400); p.provider = b.provider; p.model = b.model; if (p.is_default) Object.assign(mainModel, { provider: b.provider, model: b.model }); return c.json({ ok: true, provider: b.provider, model: b.model }); });
+  dash.get("/api/profiles/:name/soul", (c) => { const p = profiles.find((x) => x.name === c.req.param("name")); return p ? c.json({ content: p.soul, path: `${p.path}/SOUL.md`, exists: p.soul !== "" }) : c.json({ detail: "not found" }, 404); });
+  dash.put("/api/profiles/:name/soul", async (c) => { const p = profiles.find((x) => x.name === c.req.param("name")); if (!p) return c.json({ detail: "not found" }, 404); p.soul = String((await c.req.json()).content ?? ""); return c.json({ ok: true }); });
+  dash.put("/api/profiles/:name/description", async (c) => { const p = profiles.find((x) => x.name === c.req.param("name")); if (!p) return c.json({ detail: "not found" }, 404); p.description = String((await c.req.json()).description ?? ""); return c.json({ ok: true }); });
+  dash.get("/api/providers/custom-endpoints", (c) => c.json({ endpoints: customEndpoints, current: mainModel.provider }));
+  dash.post("/api/providers/custom-endpoints", async (c) => {
+    const b = await c.req.json();
+    if (!b.name || !b.base_url) return c.json({ detail: "name and base_url required" }, 422);
+    const id = (b.id || String(b.name)).toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "custom";
+    const existing = customEndpoints.find((e) => e.id === id);
+    const entry = { id, name: b.name, base_url: String(b.base_url).replace(/\/+$/, ""), model: b.model ?? "", models: Array.isArray(b.models) && b.models.length ? b.models : b.model ? [b.model] : ["local-model"] };
+    if (existing) Object.assign(existing, entry); else customEndpoints.push(entry);
+    if (b.api_key) envVars[`${id.toUpperCase().replace(/-/g, "_")}_API_KEY`] = String(b.api_key);
+    if (b.make_default && entry.model) Object.assign(mainModel, { provider: id, model: entry.model, base_url: entry.base_url });
+    return c.json({ ok: true, id, endpoints: customEndpoints, current: mainModel.provider });
+  });
+  dash.post("/api/providers/custom-endpoints/validate", async (c) => { const b = await c.req.json(); const url = String(b.base_url ?? "").replace(/\/+$/, ""); if (!url) return c.json({ ok: false, reachable: true, message: "Enter an endpoint URL first.", models: [] }); if (/unreachable|9999/.test(url)) return c.json({ ok: false, reachable: false, message: `Could not reach ${url}/models.`, models: [] }); return c.json({ ok: true, reachable: true, message: "", models: ["local-model", "local-model-small"] }); });
+  dash.delete("/api/providers/custom-endpoints/:id", (c) => { const i = customEndpoints.findIndex((e) => e.id === c.req.param("id")); if (i < 0) return c.json({ detail: "custom endpoint not found" }, 404); const [e] = customEndpoints.splice(i, 1); if (mainModel.provider === e.id) Object.assign(mainModel, { provider: "anthropic", model: "anthropic/claude-sonnet-5", base_url: "" }); return c.json({ ok: true, endpoints: customEndpoints }); });
+  dash.post("/api/providers/validate", async (c) => { const b = await c.req.json(); const v = String(b.value ?? ""); if (!v) return c.json({ ok: false, reachable: true, message: "Enter a value first." }); if (/bad|invalid/.test(v)) return c.json({ ok: false, reachable: true, message: "That API key was rejected. Double-check it and try again." }); return c.json({ ok: true, reachable: true, message: "" }); });
+
   // ---------------- api server (8642) ----------------
   const api = new Hono();
   const bearerOk = (c: { req: { header: (n: string) => string | undefined } }) => c.req.header("authorization") === `Bearer ${opts.apiKey}`;
