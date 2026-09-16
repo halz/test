@@ -91,6 +91,13 @@ const B = process.env.FLEET_URL ?? "http://127.0.0.1:18080";
   await page.waitForSelector("text=適用済み", { timeout: 10000 });
   await page.screenshot({ path: `${S}/shot-distribute.png`, fullPage: true });
 
+  // multi-machine logs
+  await page.click("nav.nav >> text=ログ");
+  await page.waitForSelector("text=5 秒ごと更新");
+  await page.click("button:has-text('すべて')");
+  await page.waitForFunction(() => document.querySelectorAll(".runs pre").length >= 6, null, { timeout: 15000 });
+  await page.screenshot({ path: `${S}/shot-logs.png`, fullPage: false });
+
   // cron + sessions + audit
   await page.click("nav.nav >> text=cron");
   await page.waitForSelector("text=Daily summary");

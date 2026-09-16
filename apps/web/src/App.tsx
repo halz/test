@@ -12,6 +12,7 @@ import { Cron } from "./pages/Cron";
 import { Sessions } from "./pages/Sessions";
 import { Audit } from "./pages/Audit";
 import { Distribute } from "./pages/Distribute";
+import { Logs } from "./pages/Logs";
 import { Settings } from "./pages/Settings";
 import { useFleet } from "./hooks";
 
@@ -20,6 +21,7 @@ const NAV = [
   ["/prompt", "プロンプト", "✎"],
   ["/ops", "一括操作", "⚙"],
   ["/distribute", "設定配布", "⇉"],
+  ["/logs", "ログ", "≡"],
   ["/cron", "cron", "⏱"],
   ["/sessions", "セッション", "☰"],
   ["/machines", "マシン", "▣"],
@@ -61,6 +63,7 @@ function Shell() {
           <Route path="/ops" element={<Ops />} />
           <Route path="/prompt" element={<Prompt />} />
           <Route path="/distribute" element={<Distribute />} />
+          <Route path="/logs" element={<Logs />} />
           <Route path="/cron" element={<Cron />} />
           <Route path="/sessions" element={<Sessions />} />
           <Route path="/audit" element={<Audit />} />
