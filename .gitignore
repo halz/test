@@ -8,3 +8,4 @@ apps/android/android/.gradle/
 apps/android/android/build/
 apps/android/android/local.properties
 apps/web/dev-dist/
+.artifacts/
