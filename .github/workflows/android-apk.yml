@@ -1,0 +1,71 @@
+name: Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "apps/web/**"
+      - "packages/**"
+      - ".github/workflows/android-apk.yml"
+      - "package.json"
+      - "package-lock.json"
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Install
+        run: npm ci --no-audit --no-fund
+      - name: Build web
+        run: npm run build -w packages/hermes-client && npm run build -w apps/web
+      - name: Sync Capacitor
+        working-directory: apps/web
+        run: npx cap sync android
+      - name: Build debug APK
+        working-directory: apps/web/android
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleDebug
+      - name: Rename artifact
+        run: cp apps/web/android/app/build/outputs/apk/debug/app-debug.apk hermes-fleet-console-debug.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hermes-fleet-console-debug-apk
+          path: hermes-fleet-console-debug.apk
+          retention-days: 30
+      # Stable download link for phones: a moving pre-release tag "apk-latest".
+      - name: Publish release (apk-latest)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-latest
+          name: Hermes Fleet Console — latest debug APK
+          prerelease: true
+          body: |
+            Debug APK built from ${{ github.sha }} (${{ github.ref_name }}).
+            初回起動でコンソールの URL（例 http://100.x.y.z:8080）を入力してください。
+          files: hermes-fleet-console-debug.apk
+      # Also keep the APK in an orphan branch so it can be fetched with plain git.
+      - name: Push APK to apk-builds branch
+        run: |
+          set -e
+          mkdir -p /tmp/apk-branch && cp hermes-fleet-console-debug.apk /tmp/apk-branch/
+          cd /tmp/apk-branch
+          git init -q -b apk-builds
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          printf 'sha=%s\nbranch=%s\nbuilt=%s\n' "${{ github.sha }}" "${{ github.ref_name }}" "$(date -u +%FT%TZ)" > BUILD_INFO.txt
+          git add -A && git commit -q -m "APK from ${{ github.sha }}"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" apk-builds
