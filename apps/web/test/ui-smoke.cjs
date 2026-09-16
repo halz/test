@@ -79,6 +79,18 @@ const B = process.env.FLEET_URL ?? "http://127.0.0.1:18080";
   await page.screenshot({ path: `${S}/shot-enroll.png` });
   await page.click("button:has-text('閉じる')");
 
+  // distribute: preset -> preview -> apply
+  await page.click("nav.nav >> text=設定配布");
+  await page.waitForSelector("text=差分プレビュー");
+  await page.click(".picker label:has-text('mac-3')");
+  await page.click("button:has-text('無人実行の承認を deny に')");
+  await page.click("button:has-text('差分プレビュー')");
+  await page.waitForSelector("table >> text=approvals.unattended_mode", { timeout: 10000 });
+  page.once("dialog", (d) => d.accept());
+  await page.click("button:has-text('適用（1 台）')");
+  await page.waitForSelector("text=適用済み", { timeout: 10000 });
+  await page.screenshot({ path: `${S}/shot-distribute.png`, fullPage: true });
+
   // cron + sessions + audit
   await page.click("nav.nav >> text=cron");
   await page.waitForSelector("text=Daily summary");

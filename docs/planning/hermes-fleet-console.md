@@ -182,8 +182,8 @@ flowchart LR
 | API サーバー `/v1/runs` + SSE の同時処理 | SSE は `data: {json}\n\n`、keepalive は `: keepalive`。イベント名は `message.delta` / `tool.started` / `tool.completed` / `approval.request` / `run.completed|failed|cancelled`。コンソールは N 台分を同時に中継できる（モックで 3 台同時を検証） |
 | 更新の完了判定 | `POST /api/hermes/update` → `GET /api/actions/hermes-update/status` を追跡。`receipt.outcome` と `exit_code` で成否を判定し、その後 `/api/status` が復帰するのを待つ |
 
-**実装済みの範囲（モック 6 台で E2E / UI テスト済み）**: Phase 1 監視、Phase 2 一括操作（カナリア更新含む）、Phase 3 プロンプト送信（承認・停止含む）、Phase 5 のうち cron・セッション横断とアラート表示、マシン登録・有効化手順、監査ログ、PWA、Android（Capacitor + GitHub Actions で APK）。
-**未実装**: Phase 4 設定配布（config/env の閲覧のみ）、Phase 5 のログ複数台 tail と外部通知、Phase 6 オーケストレーション。
+**実装済みの範囲（モック 6 台で E2E / UI テスト済み）**: Phase 1 監視、Phase 2 一括操作（カナリア更新含む）、Phase 3 プロンプト送信（承認・停止含む）、Phase 4 設定配布（config.yaml のキーと .env 変数を差分プレビュー → 適用）、Phase 5 のうち cron・セッション横断とアラート表示、マシン登録・有効化手順、監査ログ、PWA、Android（Capacitor + GitHub Actions で APK）。
+**未実装**: Phase 4 のスキル / MCP 一括インストールとテンプレ機の複製、Phase 5 のログ複数台 tail と外部通知、Phase 6 オーケストレーション。
 
 | 検証項目 | 合格条件 |
 |---|---|

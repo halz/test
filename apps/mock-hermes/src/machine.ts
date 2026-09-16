@@ -351,9 +351,36 @@ export function startMockMachine(o: MockMachineOptions): MockMachine {
     return c.json({ ok: true });
   });
   let config: Record<string, unknown> = { model: { default: "anthropic/claude-sonnet-5" }, approvals: { unattended_mode: "deny" }, gateway: { api_server: { enabled: true, port: opts.apiPort } } };
+  const deepMerge = (a: Record<string, unknown>, b: Record<string, unknown>): Record<string, unknown> => {
+    const out: Record<string, unknown> = { ...a };
+    for (const [k, v] of Object.entries(b)) {
+      const cur = out[k];
+      out[k] = v && typeof v === "object" && !Array.isArray(v) && cur && typeof cur === "object" && !Array.isArray(cur) ? deepMerge(cur as Record<string, unknown>, v as Record<string, unknown>) : v;
+    }
+    return out;
+  };
+  const envVars: Record<string, string> = { API_SERVER_KEY: opts.apiKey, ANTHROPIC_API_KEY: "sk-ant-demo" };
+  const envRows = () => ({ vars: ["API_SERVER_KEY", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "TELEGRAM_BOT_TOKEN", ...Object.keys(envVars)].filter((k, i, a) => a.indexOf(k) === i).map((name) => ({ name, set: name in envVars, value: name in envVars ? `${envVars[name].slice(0, 3)}***` : null, category: "LLM" })) });
   dash.get("/api/config", (c) => c.json(config));
-  dash.put("/api/config", async (c) => { config = await c.req.json(); return c.json({ ok: true }); });
-  dash.get("/api/env", (c) => c.json({ vars: [{ name: "API_SERVER_KEY", set: true, value: "sk-***" }, { name: "ANTHROPIC_API_KEY", set: true, value: "sk-ant-***" }, { name: "TELEGRAM_BOT_TOKEN", set: false }] }));
+  dash.put("/api/config", async (c) => {
+    const body = await c.req.json();
+    if (!body || typeof body.config !== "object") return c.json({ detail: "config required" }, 422);
+    config = deepMerge(config, body.config);
+    return c.json({ ok: true, config });
+  });
+  dash.get("/api/env", (c) => c.json(envRows()));
+  dash.put("/api/env", async (c) => {
+    const body = await c.req.json();
+    if (!body?.key) return c.json({ detail: "key required" }, 422);
+    envVars[String(body.key)] = String(body.value ?? "");
+    return c.json({ ok: true, key: body.key });
+  });
+  dash.delete("/api/env", async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    if (!(body.key in envVars)) return c.json({ detail: `${body.key} not found in .env` }, 404);
+    delete envVars[body.key];
+    return c.json({ ok: true, found: true });
+  });
 
   // ---------------- api server (8642) ----------------
   const api = new Hono();

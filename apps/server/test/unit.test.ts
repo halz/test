@@ -10,6 +10,7 @@ import { FleetPoller } from "../src/fleet.js";
 import { AuditLog } from "../src/audit.js";
 import { RunManager } from "../src/runs.js";
 import { OpsManager } from "../src/ops.js";
+import { Distributor, coerceValue, getPath, setPath } from "../src/distribute.js";
 
 describe("crypto", () => {
   it("round-trips secrets and rejects tampering", () => {
@@ -80,7 +81,7 @@ describe("app auth gate", () => {
     const repo = new MachineRepo(db, key, 1000);
     const audit = new AuditLog(db);
     const poller = new FleetPoller(repo, 60000);
-    const app = buildApp({ config: loadConfig({ FLEET_DATA_DIR: "/tmp/x" } as NodeJS.ProcessEnv), auth, repo, poller, audit, runs: new RunManager(db, repo, audit), ops: new OpsManager(repo, audit, poller) });
+    const app = buildApp({ config: loadConfig({ FLEET_DATA_DIR: "/tmp/x" } as NodeJS.ProcessEnv), auth, repo, poller, audit, runs: new RunManager(db, repo, audit), ops: new OpsManager(repo, audit, poller), distributor: new Distributor(repo, audit) });
     expect((await app.request("/api/machines")).status).toBe(401);
     const setup = await app.request("/api/auth/setup", { method: "POST", body: JSON.stringify({ password: "longenough" }), headers: { "content-type": "application/json" } });
     expect(setup.status).toBe(200);
@@ -90,5 +91,20 @@ describe("app auth gate", () => {
     expect(await list.json()).toEqual({ machines: [] });
     const bad = await app.request("/api/machines", { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ name: "" }) });
     expect(bad.status).toBe(400);
+  });
+});
+
+describe("distribute helpers", () => {
+  it("get/set dotted paths and coerce values", () => {
+    const o: Record<string, unknown> = { a: { b: 1 } };
+    expect(getPath(o, "a.b")).toBe(1);
+    expect(getPath(o, "a.x.y")).toBeUndefined();
+    setPath(o, "a.c.d", true);
+    expect(o).toEqual({ a: { b: 1, c: { d: true } } });
+    expect(coerceValue("true")).toBe(true);
+    expect(coerceValue("42")).toBe(42);
+    expect(coerceValue("deny")).toBe("deny");
+    expect(coerceValue('{"x":1}')).toEqual({ x: 1 });
+    expect(coerceValue("")).toBe("");
   });
 });

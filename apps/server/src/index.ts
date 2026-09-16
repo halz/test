@@ -9,6 +9,7 @@ import { AuditLog } from "./audit.js";
 import { RunManager } from "./runs.js";
 import { OpsManager } from "./ops.js";
 import { buildApp } from "./app.js";
+import { Distributor } from "./distribute.js";
 
 export function createServer(env: NodeJS.ProcessEnv = process.env) {
   const config = loadConfig(env);
@@ -20,7 +21,8 @@ export function createServer(env: NodeJS.ProcessEnv = process.env) {
   const poller = new FleetPoller(repo, config.pollIntervalMs);
   const runs = new RunManager(db, repo, audit);
   const ops = new OpsManager(repo, audit, poller);
-  const app = buildApp({ config, auth, repo, poller, audit, runs, ops });
+  const distributor = new Distributor(repo, audit);
+  const app = buildApp({ config, auth, repo, poller, audit, runs, ops, distributor });
   if (env.FLEET_DEMO_SEED === "1" && repo.list().length === 0) seedDemo(repo);
   return { config, app, poller, db };
 }

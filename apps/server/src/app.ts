@@ -12,6 +12,7 @@ import { FleetPoller } from "./fleet.js";
 import { AuditLog } from "./audit.js";
 import { RunManager } from "./runs.js";
 import { OpsManager, type OpsKind } from "./ops.js";
+import { Distributor, coerceValue, type ConfigChange, type EnvChange } from "./distribute.js";
 
 export interface AppDeps {
   config: ServerConfig;
@@ -21,6 +22,7 @@ export interface AppDeps {
   audit: AuditLog;
   runs: RunManager;
   ops: OpsManager;
+  distributor: Distributor;
 }
 
 const OPS_KINDS: OpsKind[] = ["gateway.start", "gateway.stop", "gateway.restart", "update", "doctor", "security-audit", "backup"];
@@ -297,6 +299,25 @@ export function buildApp(d: AppDeps): Hono {
   api.post("/runs/:id/approval", async (c) => {
     const body = await c.req.json<{ choice: "once" | "session" | "always" | "deny"; request_id?: string }>();
     return c.json({ result: await d.runs.approve(c.req.param("id"), body.choice, body.request_id) });
+  });
+
+  // config / env distribution
+  const parseDistribute = (body: { machineIds?: string[]; config?: { path: string; value: unknown; raw?: string }[]; env?: { key: string; value: string | null }[] }) => {
+    if (!Array.isArray(body.machineIds) || body.machineIds.length === 0) throw new ValidationError("machineIds required");
+    const config: ConfigChange[] = (body.config ?? []).filter((c) => c.path && /^[A-Za-z0-9_.-]+$/.test(c.path)).map((c) => ({ path: c.path, value: typeof c.raw === "string" ? coerceValue(c.raw) : c.value }));
+    const env: EnvChange[] = (body.env ?? []).filter((e) => e.key && /^[A-Z][A-Z0-9_]*$/.test(e.key)).map((e) => ({ key: e.key, value: e.value === null ? null : String(e.value) }));
+    if (config.length === 0 && env.length === 0) throw new ValidationError("nothing to distribute");
+    return { machineIds: body.machineIds, config, env };
+  };
+  api.post("/distribute/preview", async (c) => {
+    const { machineIds, config, env } = parseDistribute(await c.req.json());
+    return c.json({ rows: await d.distributor.preview(machineIds, config, env) });
+  });
+  api.post("/distribute/apply", async (c) => {
+    const { machineIds, config, env } = parseDistribute(await c.req.json());
+    const rows = await d.distributor.apply(machineIds, config, env);
+    for (const id of machineIds) void d.poller.poll(id);
+    return c.json({ rows });
   });
 
   api.get("/audit", (c) => c.json({ entries: d.audit.list(Number(c.req.query("limit") ?? 100), Number(c.req.query("offset") ?? 0)) }));

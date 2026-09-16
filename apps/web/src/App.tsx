@@ -11,6 +11,7 @@ import { Prompt } from "./pages/Prompt";
 import { Cron } from "./pages/Cron";
 import { Sessions } from "./pages/Sessions";
 import { Audit } from "./pages/Audit";
+import { Distribute } from "./pages/Distribute";
 import { Settings } from "./pages/Settings";
 import { useFleet } from "./hooks";
 
@@ -18,6 +19,7 @@ const NAV = [
   ["/", "フリート", "⌂"],
   ["/prompt", "プロンプト", "✎"],
   ["/ops", "一括操作", "⚙"],
+  ["/distribute", "設定配布", "⇉"],
   ["/cron", "cron", "⏱"],
   ["/sessions", "セッション", "☰"],
   ["/machines", "マシン", "▣"],
@@ -58,6 +60,7 @@ function Shell() {
           <Route path="/machines/:id" element={<MachineDetail fleet={fleet} />} />
           <Route path="/ops" element={<Ops />} />
           <Route path="/prompt" element={<Prompt />} />
+          <Route path="/distribute" element={<Distribute />} />
           <Route path="/cron" element={<Cron />} />
           <Route path="/sessions" element={<Sessions />} />
           <Route path="/audit" element={<Audit />} />
@@ -66,7 +69,7 @@ function Shell() {
         </Routes>
       </main>
       <nav className="mobile-nav">
-        {NAV.slice(0, 6).map(([to, label, icon]) => (
+        {NAV.filter(([to]) => ["/", "/prompt", "/ops", "/distribute", "/cron", "/machines"].includes(to)).map(([to, label, icon]) => (
           <NavLink key={to} to={to} end={to === "/"}><div>{icon}</div>{label}</NavLink>
         ))}
         <NavLink to="/settings"><div>⚒</div>設定</NavLink>

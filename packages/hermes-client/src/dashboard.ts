@@ -194,16 +194,22 @@ export class DashboardClient {
     return this.request("GET", withProfile("/api/config", profile));
   }
 
-  putConfig(body: Record<string, unknown>, profile?: string): Promise<unknown> {
-    return this.request("PUT", withProfile("/api/config", profile), body);
+  /** Deep-merges `partial` into config.yaml on the machine (PUT /api/config, body {config}). */
+  putConfig(partial: Record<string, unknown>, profile?: string): Promise<unknown> {
+    return this.request("PUT", withProfile("/api/config", profile), { config: partial });
   }
 
   env(profile?: string): Promise<unknown> {
     return this.request("GET", withProfile("/api/env", profile));
   }
 
-  putEnv(body: Record<string, unknown>, profile?: string): Promise<unknown> {
-    return this.request("PUT", withProfile("/api/env", profile), body);
+  /** Sets one .env variable (PUT /api/env, body {key, value}). */
+  putEnv(key: string, value: string, profile?: string): Promise<unknown> {
+    return this.request("PUT", withProfile("/api/env", profile), { key, value });
+  }
+
+  deleteEnv(key: string, profile?: string): Promise<unknown> {
+    return this.request("DELETE", withProfile("/api/env", profile), { key });
   }
 
   // ---- generic ----

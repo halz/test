@@ -110,9 +110,24 @@ await j("POST", `/api/runs/${slow.runs[0].id}/stop`);
 await new Promise((r) => setTimeout(r, 800));
 assert((await j("GET", `/api/runs/batches/${slow.batchId}`)).runs[0].status === "cancelled", "stop -> cancelled");
 
+// config / env distribution with preview
+const pv = await j("POST", "/api/distribute/preview", { machineIds: [fleet[0].id, fleet[1].id], config: [{ path: "approvals.unattended_mode", raw: "allow" }, { path: "model.default", raw: "anthropic/claude-sonnet-5" }], env: [{ key: "OPENROUTER_API_KEY", value: "sk-or-test" }] });
+assert(pv.rows.length === 2 && pv.rows[0].config[0].current === "deny" && pv.rows[0].config[0].changed && !pv.rows[0].config[1].changed, "preview shows current vs next");
+assert(pv.rows[0].env[0].currentSet === false && pv.rows[0].env[0].next === "sk-***", "preview masks env values");
+const ap = await j("POST", "/api/distribute/apply", { machineIds: [fleet[0].id, fleet[1].id], config: [{ path: "approvals.unattended_mode", raw: "allow" }], env: [{ key: "OPENROUTER_API_KEY", value: "sk-or-test" }] });
+assert(ap.rows.every((r) => r.ok), "apply ok on both");
+const cfgAfter = await j("GET", `/api/machines/${fleet[0].id}/config`);
+assert(cfgAfter.approvals.unattended_mode === "allow" && cfgAfter.model.default === "anthropic/claude-sonnet-5", "config deep-merged on machine");
+const envAfter = await j("GET", `/api/machines/${fleet[0].id}/env`);
+assert(envAfter.vars.find((v) => v.name === "OPENROUTER_API_KEY").set === true, "env var set on machine");
+const pv2 = await j("POST", "/api/distribute/preview", { machineIds: [fleet[0].id], config: [], env: [{ key: "OPENROUTER_API_KEY", value: null }] });
+assert(pv2.rows[0].env[0].changed === true && pv2.rows[0].env[0].next === null, "preview delete");
+const badDist = await fetch(B + "/api/distribute/apply", { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify({ machineIds: [fleet[0].id], config: [], env: [] }) });
+assert(badDist.status === 400, "empty distribute rejected");
+
 const audit = await j("GET", "/api/audit?limit=200");
 console.log("  audit entries:", audit.entries.length, [...new Set(audit.entries.map((e) => e.action))].join(","));
-assert(audit.entries.some((e) => e.action === "ops.update.done"), "audit has ops entries");
+assert(audit.entries.some((e) => e.action === "ops.update.done") && audit.entries.some((e) => e.action === "distribute.apply"), "audit has ops + distribute entries");
 await j("PUT", `/api/machines/${fleet[6].id}`, { name: "ghost-renamed" });
 await j("DELETE", `/api/machines/${fleet[6].id}`);
 assert((await j("GET", "/api/machines")).machines.length === 6, "delete works");
