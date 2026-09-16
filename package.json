@@ -1,0 +1,25 @@
+{
+  "name": "hermes-fleet-console",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "build": "npm run build -w packages/hermes-client && npm run build -w apps/server && npm run build -w apps/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "dev": "concurrently -k -n mock,server,web \"npm run dev -w apps/mock-hermes\" \"npm run dev -w apps/server\" \"npm run dev -w apps/web\"",
+    "demo": "node scripts/demo.mjs",
+    "start": "node apps/server/dist/index.js"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}

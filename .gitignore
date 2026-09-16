@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+data/
+apps/android/android/app/build/
+apps/android/android/.gradle/
+apps/android/android/build/
+apps/android/android/local.properties
+apps/web/dev-dist/
