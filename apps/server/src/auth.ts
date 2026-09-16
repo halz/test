@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { Context, Next } from "hono";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { hashPassword, hashToken, newToken, verifyPassword } from "./crypto.js";
 
 const SESSION_TTL_MS = 30 * 24 * 3600_000;
@@ -7,10 +8,26 @@ const SESSION_TTL_MS = 30 * 24 * 3600_000;
 export class AuthService {
   private failures = new Map<string, { count: number; until: number }>();
 
-  constructor(private readonly db: DatabaseSync) {}
+  /**
+   * @param demoPassword Demo mode (stateless hosting): a fixed password whose session token is
+   *   derived deterministically, so it stays valid across serverless instances.
+   */
+  constructor(
+    private readonly db: DatabaseSync,
+    private readonly demoPassword?: string,
+  ) {}
+
+  get isDemo(): boolean {
+    return Boolean(this.demoPassword);
+  }
 
   isConfigured(): boolean {
+    if (this.demoPassword) return true;
     return this.getSetting("admin_password_hash") !== null;
+  }
+
+  private demoToken(): string {
+    return createHmac("sha256", `fleet-demo:${this.demoPassword}`).update("session").digest("base64url");
   }
 
   setup(password: string): void {
@@ -28,6 +45,10 @@ export class AuthService {
   }
 
   login(password: string, ip: string, label = ""): { token: string; expiresAt: number } {
+    if (this.demoPassword) {
+      if (password !== this.demoPassword) throw new AuthError("invalid password", 401);
+      return { token: this.demoToken(), expiresAt: Date.now() + SESSION_TTL_MS };
+    }
     const f = this.failures.get(ip);
     if (f && f.until > Date.now()) throw new AuthError("too many attempts; try again later", 429);
     const hash = this.getSetting("admin_password_hash");
@@ -48,6 +69,11 @@ export class AuthService {
   }
 
   verify(token: string): boolean {
+    if (this.demoPassword) {
+      const a = Buffer.from(token);
+      const b = Buffer.from(this.demoToken());
+      return a.length === b.length && timingSafeEqual(a, b);
+    }
     const row = this.db.prepare("SELECT expires_at FROM sessions WHERE token_hash = ?").get(hashToken(token)) as { expires_at: number } | undefined;
     if (!row) return false;
     if (row.expires_at < Date.now()) {

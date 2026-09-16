@@ -26,6 +26,8 @@ export class FleetPoller {
   private inFlight = new Set<string>();
   private updateCache = new Map<string, UpdateCheck & { checkedAt: number }>();
   private fastUntil = 0;
+  private lastPollAll = 0;
+  private pollAllPromise: Promise<void> | null = null;
 
   constructor(
     private readonly repo: MachineRepo,
@@ -68,10 +70,22 @@ export class FleetPoller {
   }
 
   async pollAll(): Promise<void> {
-    const machines = this.repo.list();
-    const live = new Set(machines.map((m) => m.id));
-    for (const id of this.snapshots.keys()) if (!live.has(id)) this.snapshots.delete(id);
-    await Promise.all(machines.map((m) => this.poll(m.id)));
+    if (this.pollAllPromise) return this.pollAllPromise;
+    this.pollAllPromise = (async () => {
+      const machines = this.repo.list();
+      const live = new Set(machines.map((m) => m.id));
+      for (const id of this.snapshots.keys()) if (!live.has(id)) this.snapshots.delete(id);
+      await Promise.all(machines.map((m) => this.poll(m.id)));
+      this.lastPollAll = Date.now();
+    })().finally(() => {
+      this.pollAllPromise = null;
+    });
+    return this.pollAllPromise;
+  }
+
+  /** Poll now if the last full poll is older than maxAgeMs (used where no background loop runs). */
+  async ensureFresh(maxAgeMs: number): Promise<void> {
+    if (Date.now() - this.lastPollAll > maxAgeMs) await this.pollAll();
   }
 
   async poll(id: string, opts: { forceUpdateCheck?: boolean } = {}): Promise<MachineSnapshot | null> {

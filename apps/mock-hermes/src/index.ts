@@ -1,5 +1,5 @@
-export { startMockMachine } from "./machine.js";
-export type { MockMachine, MockMachineOptions } from "./machine.js";
+export { startMockMachine, createMockMachine, inProcessFleetFetch } from "./machine.js";
+export type { MockMachine, MockMachineOptions, MockMachineApps } from "./machine.js";
 
 export interface FleetSpec {
   name: string;

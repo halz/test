@@ -8,10 +8,16 @@ const B = process.env.FLEET_URL ?? "http://127.0.0.1:18080";
   page.on("pageerror", (e) => console.log("PAGEERROR", e.message));
   page.on("console", (m) => m.type() === "error" && console.log("CONSOLE", m.text()));
   await page.goto(B + "/");
-  await page.waitForSelector("text=初回セットアップ", { timeout: 10000 });
-  await page.fill("input[type=password] >> nth=0", "correct horse battery");
-  await page.fill("input[type=password] >> nth=1", "correct horse battery");
-  await page.click("button:has-text('セットアップしてログイン')");
+  await page.waitForSelector("text=初回セットアップ, text=デモ環境です", { timeout: 10000 });
+  if (await page.$("text=デモ環境です")) {
+    // Hosted demo: fixed password, already configured.
+    await page.fill("input[type=password] >> nth=0", "demo");
+    await page.click("button:has-text('ログイン')");
+  } else {
+    await page.fill("input[type=password] >> nth=0", "correct horse battery");
+    await page.fill("input[type=password] >> nth=1", "correct horse battery");
+    await page.click("button:has-text('セットアップしてログイン')");
+  }
   await page.waitForSelector("text=オンライン", { timeout: 10000 });
   await page.waitForFunction(() => document.querySelectorAll(".grid .card").length >= 6, null, { timeout: 15000 });
   await page.waitForTimeout(1500);

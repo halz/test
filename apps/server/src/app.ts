@@ -49,7 +49,7 @@ export function buildApp(d: AppDeps): Hono {
 
   // ---- public ----
   app.get("/api/health", (c) => c.json({ status: "ok", version: "0.1.0" }));
-  app.get("/api/auth/state", (c) => c.json({ configured: d.auth.isConfigured() }));
+  app.get("/api/auth/state", (c) => c.json({ configured: d.auth.isConfigured(), ...(d.auth.isDemo ? { demo: true, demoPassword: d.config.demoPassword } : {}) }));
   app.post("/api/auth/setup", async (c) => {
     const body = await c.req.json<{ password?: string }>();
     try {
@@ -202,16 +202,18 @@ export function buildApp(d: AppDeps): Hono {
   });
 
   // fleet overview + stream
-  api.get("/fleet/overview", (c) => {
+  api.get("/fleet/overview", async (c) => {
     d.poller.touch();
+    await d.poller.ensureFresh(d.config.pollIntervalMs);
     return c.json({ machines: d.poller.all(), at: Date.now() });
   });
   api.post("/fleet/refresh", async (c) => {
     await d.poller.pollAll();
     return c.json({ machines: d.poller.all(), at: Date.now() });
   });
-  api.get("/fleet/stream", (c) => {
+  api.get("/fleet/stream", async (c) => {
     d.poller.touch();
+    await d.poller.ensureFresh(d.config.pollIntervalMs);
     return streamSSE(c, async (stream) => {
       await stream.writeSSE({ event: "overview", data: JSON.stringify({ machines: d.poller.all(), at: Date.now() }) });
       let alive = true;

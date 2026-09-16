@@ -13,3 +13,4 @@ apps/web/android/app/src/main/assets/capacitor.plugins.json
 apps/web/android/capacitor-cordova-android-plugins/
 apps/web/dev-dist/
 .artifacts/
+.vercel/

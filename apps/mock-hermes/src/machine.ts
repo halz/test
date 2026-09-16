@@ -95,7 +95,14 @@ function fakeLogLines(name: string, n: number): string[] {
   return out;
 }
 
-export function startMockMachine(o: MockMachineOptions): MockMachine {
+export interface MockMachineApps {
+  machine: MockMachine;
+  dash: Hono;
+  api: Hono;
+}
+
+/** Build the two Hono apps for one machine without binding ports (used in-process by the Vercel demo). */
+export function createMockMachine(o: MockMachineOptions): MockMachineApps {
   const opts = {
     name: o.name,
     os: o.os,
@@ -529,12 +536,39 @@ export function startMockMachine(o: MockMachineOptions): MockMachine {
   api.get("/api/sessions", (c) => c.json({ sessions: sessions.slice(0, 20), total: sessions.length }));
   api.get("/api/jobs", (c) => c.json({ jobs: cronJobs }));
 
+  machine.close = async () => {
+    for (const r of machine.runs.values()) if (r.timer) clearTimeout(r.timer);
+  };
+  return { machine, dash, api };
+}
+
+export function startMockMachine(o: MockMachineOptions): MockMachine {
+  const { machine, dash, api } = createMockMachine(o);
   const servers: ServerType[] = [];
-  servers.push(serve({ fetch: dash.fetch, port: opts.dashboardPort, hostname: opts.host }));
-  servers.push(serve({ fetch: api.fetch, port: opts.apiPort, hostname: opts.host }));
+  servers.push(serve({ fetch: dash.fetch, port: machine.opts.dashboardPort, hostname: machine.opts.host }));
+  servers.push(serve({ fetch: api.fetch, port: machine.opts.apiPort, hostname: machine.opts.host }));
+  const closeTimers = machine.close;
   machine.close = () =>
-    Promise.all(servers.map((s) => new Promise<void>((res) => s.close(() => res())))).then(() => {
-      for (const r of machine.runs.values()) if (r.timer) clearTimeout(r.timer);
-    });
+    Promise.all(servers.map((s) => new Promise<void>((res) => s.close(() => res())))).then(closeTimers);
   return machine;
+}
+
+/**
+ * A fetch() that routes `http://<name>.demo:9119` / `:8642` to in-process mock apps, so the console
+ * can run a whole demo fleet inside one process (no sockets). Anything else falls through to real fetch.
+ */
+export function inProcessFleetFetch(fleet: MockMachineApps[], fallback: typeof fetch = globalThis.fetch): typeof fetch {
+  const byHost = new Map<string, Hono>();
+  for (const m of fleet) {
+    byHost.set(`${m.machine.opts.name}.demo:9119`, m.dash);
+    byHost.set(`${m.machine.opts.name}.demo:8642`, m.api);
+  }
+  return (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    const host = new URL(url).host;
+    const app = byHost.get(host);
+    if (!app) return fallback(input as string, init);
+    const req = new Request(url, init);
+    return app.fetch(req);
+  }) as typeof fetch;
 }

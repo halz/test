@@ -4,7 +4,7 @@ import { api, setToken, getServerUrl, isNativeApp } from "../api";
 import { ErrorBox } from "../components/ui";
 
 export function Login() {
-  const state = useQuery({ queryKey: ["auth-state", getServerUrl()], queryFn: () => api<{ configured: boolean }>("GET", "/api/auth/state"), retry: 1 });
+  const state = useQuery({ queryKey: ["auth-state", getServerUrl()], queryFn: () => api<{ configured: boolean; demo?: boolean; demoPassword?: string }>("GET", "/api/auth/state"), retry: 1 });
   const [pw, setPw] = useState("");
   const [pw2, setPw2] = useState("");
   const [err, setErr] = useState<string | null>(null);
@@ -38,6 +38,7 @@ export function Login() {
       ) : null}
       {state.data ? (
         <form className="stack" onSubmit={submit}>
+          {state.data.demo ? <div className="alert ok">デモ環境です。モックの Hermes 6 台（Mac 5 台 + Windows 1 台）が登録済みです。パスワード: <code>{state.data.demoPassword}</code></div> : null}
           {configured ? <p className="muted">管理者パスワードを入力してください。</p> : <p className="muted">初回セットアップ: このコンソールの管理者パスワードを決めてください（8 文字以上）。</p>}
           <div><label>パスワード</label><input type="password" value={pw} onChange={(e) => setPw(e.target.value)} autoFocus autoComplete={configured ? "current-password" : "new-password"} /></div>
           {!configured ? <div><label>パスワード（確認）</label><input type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} /></div> : null}

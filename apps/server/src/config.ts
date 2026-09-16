@@ -10,6 +10,8 @@ export interface ServerConfig {
   staticDir: string | null;
   corsOrigins: string[];
   requestTimeoutMs: number;
+  /** Set for the hosted demo: fixed password, stateless sessions, mocks in-process. */
+  demoPassword?: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
@@ -27,5 +29,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
       .map((s) => s.trim())
       .filter(Boolean),
     requestTimeoutMs: Number(env.FLEET_REQUEST_TIMEOUT_MS ?? 15_000),
+    demoPassword: env.FLEET_DEMO_PASSWORD || undefined,
   };
 }

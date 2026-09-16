@@ -58,6 +58,8 @@ export class MachineRepo {
     private readonly db: DatabaseSync,
     private readonly key: Buffer,
     private readonly timeoutMs: number,
+    /** Custom fetch (the Vercel demo routes *.demo hosts to in-process mocks). */
+    private readonly fetchImpl?: typeof fetch,
   ) {}
 
   list(): Machine[] {
@@ -142,13 +144,14 @@ export class MachineRepo {
       ? new DashboardClient({
           baseUrl: row.dashboard_url,
           timeoutMs: this.timeoutMs,
+          fetch: this.fetchImpl,
           auth:
             row.dashboard_auth_kind === "basic"
               ? { kind: "basic", username: row.dashboard_username, password: decrypt(this.key, row.dashboard_password_enc) }
               : { kind: "none" },
         })
       : null;
-    const api = row.api_url ? new ApiServerClient({ baseUrl: row.api_url, apiKey: decrypt(this.key, row.api_key_enc), timeoutMs: this.timeoutMs }) : null;
+    const api = row.api_url ? new ApiServerClient({ baseUrl: row.api_url, apiKey: decrypt(this.key, row.api_key_enc), timeoutMs: this.timeoutMs, fetch: this.fetchImpl }) : null;
     const entry = { updatedAt: row.updated_at, dashboard, api };
     this.clientCache.set(id, entry);
     return { machine, ...entry };
@@ -160,10 +163,11 @@ export class MachineRepo {
       ? new DashboardClient({
           baseUrl: normalizeUrl(input.dashboardUrl),
           timeoutMs: this.timeoutMs,
+          fetch: this.fetchImpl,
           auth: input.dashboardAuthKind === "basic" ? { kind: "basic", username: input.dashboardUsername ?? "", password: input.dashboardPassword ?? "" } : { kind: "none" },
         })
       : null;
-    const api = input.apiUrl ? new ApiServerClient({ baseUrl: normalizeUrl(input.apiUrl), apiKey: input.apiKey ?? "", timeoutMs: this.timeoutMs }) : null;
+    const api = input.apiUrl ? new ApiServerClient({ baseUrl: normalizeUrl(input.apiUrl), apiKey: input.apiKey ?? "", timeoutMs: this.timeoutMs, fetch: this.fetchImpl }) : null;
     return { dashboard, api };
   }
 }
