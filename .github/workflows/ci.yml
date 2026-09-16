@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+      - run: npm test
+      - name: API end-to-end against mock fleet
+        run: |
+          node apps/mock-hermes/dist/cli.js --count 6 --base-port 19119 &
+          FLEET_PORT=18080 FLEET_DATA_DIR=/tmp/fleet-e2e FLEET_POLL_INTERVAL_MS=5000 node apps/server/dist/index.js &
+          sleep 2
+          node apps/server/test/e2e-api.mjs

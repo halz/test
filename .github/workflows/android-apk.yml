@@ -1,0 +1,46 @@
+name: Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "apps/web/**"
+      - "packages/**"
+      - ".github/workflows/android-apk.yml"
+      - "package.json"
+      - "package-lock.json"
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+      - name: Install
+        run: npm ci --no-audit --no-fund
+      - name: Build web
+        run: npm run build -w packages/hermes-client && npm run build -w apps/web
+      - name: Sync Capacitor
+        working-directory: apps/web
+        run: npx cap sync android
+      - name: Build debug APK
+        working-directory: apps/web/android
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleDebug
+      - name: Rename artifact
+        run: cp apps/web/android/app/build/outputs/apk/debug/app-debug.apk hermes-fleet-console-debug.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hermes-fleet-console-debug-apk
+          path: hermes-fleet-console-debug.apk
+          retention-days: 30

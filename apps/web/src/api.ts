@@ -4,14 +4,10 @@
 const KEY_TOKEN = "fleet.token";
 const KEY_URL = "fleet.serverUrl";
 
-declare global {
-  interface Window {
-    Capacitor?: { isNativePlatform?: () => boolean };
-  }
-}
+import { Capacitor } from "@capacitor/core";
 
 export function isNativeApp(): boolean {
-  return Boolean(window.Capacitor?.isNativePlatform?.());
+  return Capacitor.isNativePlatform();
 }
 
 export function getServerUrl(): string {

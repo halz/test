@@ -1,7 +1,7 @@
 # Hermes Desktop 複数マシン一元管理アプリ — プラニング
 
-作成日: 2026-09-16 / 更新: 2026-09-16（要件回答を反映）
-状態: **要件確定。Phase 0 スパイクから着手可能。**
+作成日: 2026-09-16 / 更新: 2026-09-16（要件回答を反映、Phase 0〜3 の実装を追記）
+状態: **実装中。Phase 0（ソース調査）完了、Phase 1〜3 と cron・セッション横断の初版を実装済み（モックで検証、実機は未検証）。** 使い方は [README](../../README.md)。
 
 ---
 
@@ -170,6 +170,20 @@ flowchart LR
 ## 5. フェーズ（ユーザー指定の優先順位順）
 
 ### Phase 0 — スパイク（1〜2 日、実機: Mac 1 台 + Windows 機）
+
+**結果（2026-09-16、hermes-agent の main ブランチのソースを読んで確定。実機は未検証）**
+
+| 項目 | 結果 |
+|---|---|
+| ダッシュボードのパスワードログイン | `POST /auth/password-login` に `{provider:"basic", username, password}` を送ると `hermes_session_at` / `hermes_session_rt` クッキーが返る（既定 TTL 12 時間、HMAC 署名の stateless セッション）。`packages/hermes-client` の `DashboardClient` が実装済みで、401 時は 1 回だけ再ログインして再試行する |
+| `hermes serve` と `hermes dashboard` の関係 | 同一サーバー（`serve` は headless で SPA を配信しないだけ）。REST API は共通なので `hermes serve --host <tailscale-ip>` をコンソールの接続先にできる |
+| Desktop 起動の `127.0.0.1:9119` との共存 | 別プロセスとして Tailscale アドレスにバインドした serve を launchd / タスクスケジューラで常駐させる方針（`scripts/enroll/*`）。同一ポートで衝突する場合は `--port 9120` 等に変更。**実機で要確認** |
+| Windows 11 の常駐 | タスクスケジューラ（ログオン時、失敗時再起動）で `hermes serve --host <ip> --skip-build`。`--skip-build` は公式に Windows Scheduled Task 向けとして用意されている。`/api/pty` は POSIX 限定 |
+| API サーバー `/v1/runs` + SSE の同時処理 | SSE は `data: {json}\n\n`、keepalive は `: keepalive`。イベント名は `message.delta` / `tool.started` / `tool.completed` / `approval.request` / `run.completed|failed|cancelled`。コンソールは N 台分を同時に中継できる（モックで 3 台同時を検証） |
+| 更新の完了判定 | `POST /api/hermes/update` → `GET /api/actions/hermes-update/status` を追跡。`receipt.outcome` と `exit_code` で成否を判定し、その後 `/api/status` が復帰するのを待つ |
+
+**実装済みの範囲（モック 6 台で E2E / UI テスト済み）**: Phase 1 監視、Phase 2 一括操作（カナリア更新含む）、Phase 3 プロンプト送信（承認・停止含む）、Phase 5 のうち cron・セッション横断とアラート表示、マシン登録・有効化手順、監査ログ、PWA、Android（Capacitor + GitHub Actions で APK）。
+**未実装**: Phase 4 設定配布（config/env の閲覧のみ）、Phase 5 のログ複数台 tail と外部通知、Phase 6 オーケストレーション。
 
 | 検証項目 | 合格条件 |
 |---|---|
@@ -347,9 +361,10 @@ hermes serve --host <tailscale-ip> --port 9119   # Phase 0 の結果次第で De
 
 ## 10. 次のアクション
 
-1. **Phase 0 スパイク**を Mac 1 台 + Windows 機で実施し、4 項目の結果を本書に追記。
-2. Phase 1（監視）の受け入れ基準を Issue 化して着手。`packages/hermes-client` から作る。
-3. Phase 2 以降は 1 フェーズずつ PR を分け、各 PR に受け入れ基準の達成証跡（スクリーンショットまたはログ）を付ける。
+1. **実機検証**: Mac 1 台で `scripts/enroll/macos.sh` を実行し、コンソールから接続テスト → フリート表示 → 再起動 → プロンプト送信を確認。Hermes のバージョン差で API の形が違えば `packages/hermes-client` を合わせる。
+2. Windows 11 で `scripts/enroll/windows.ps1` を検証（タスクスケジューラの常駐、`--skip-build`）。
+3. Mac mini に `scripts/macmini/install.sh` で配備し、Android 端末（PWA または APK）から Tailscale 経由で開く。
+4. その後 Phase 4（設定配布）→ Phase 6（プレイブック）の順で実装。
 
 ---
 

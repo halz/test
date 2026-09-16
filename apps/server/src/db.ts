@@ -1,8 +1,14 @@
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync as DatabaseSyncT } from "node:sqlite";
+
+// Loaded at runtime via process.getBuiltinModule so bundlers/test runners that predate
+// node:sqlite (Vite's builtin list) do not try to resolve it as a file.
+const { DatabaseSync } = process.getBuiltinModule("node:sqlite") as typeof import("node:sqlite");
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
-export function openDb(path: string): DatabaseSync {
+export type { DatabaseSyncT as DatabaseSync };
+
+export function openDb(path: string): DatabaseSyncT {
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
   db.exec("PRAGMA journal_mode = WAL");
@@ -11,7 +17,7 @@ export function openDb(path: string): DatabaseSync {
   return db;
 }
 
-function migrate(db: DatabaseSync): void {
+function migrate(db: DatabaseSyncT): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,

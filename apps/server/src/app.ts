@@ -305,9 +305,10 @@ export function buildApp(d: AppDeps): Hono {
 
   // static SPA (production)
   if (d.config.staticDir && existsSync(d.config.staticDir)) {
-    const indexHtml = readFileSync(join(d.config.staticDir, "index.html"), "utf8");
+    const indexPath = join(d.config.staticDir, "index.html");
     app.use("/*", serveStatic({ root: d.config.staticDir, rewriteRequestPath: (p) => p }));
-    app.get("*", (c) => (c.req.path.startsWith("/api/") ? c.json({ error: "not found" }, 404) : c.html(indexHtml)));
+    // Read index.html per request so a rebuilt SPA (new asset hashes) is picked up without a restart.
+    app.get("*", (c) => (c.req.path.startsWith("/api/") ? c.json({ error: "not found" }, 404) : c.html(readFileSync(indexPath, "utf8"))));
   }
   return app;
 }
