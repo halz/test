@@ -71,10 +71,12 @@ const B = process.env.FLEET_URL ?? "http://127.0.0.1:18080";
   await page.click("nav.nav >> text=マシン");
   await page.waitForSelector("text=有効化手順");
   await page.click("button:has-text('＋ 追加')");
+  // In the hosted demo the mocks live in-process behind *.demo hosts; locally they listen on 19119/19120.
+  const demoHosts = Boolean(await page.evaluate(() => fetch("/api/auth/state").then((r) => r.json()).then((s) => s.demo)));
   await page.fill("input[placeholder='mac-mini']", "mac-7");
-  await page.fill("input[placeholder='http://100.x.y.z:9119']", "http://127.0.0.1:19119");
+  await page.fill("input[placeholder='http://100.x.y.z:9119']", demoHosts ? "http://mac-1.demo:9119" : "http://127.0.0.1:19119");
   await page.fill("input[type=password] >> nth=0", "hermes");
-  await page.fill("input[placeholder='http://100.x.y.z:8642']", "http://127.0.0.1:19120");
+  await page.fill("input[placeholder='http://100.x.y.z:8642']", demoHosts ? "http://mac-1.demo:8642" : "http://127.0.0.1:19120");
   await page.fill("input[type=password] >> nth=1", "mock-key-1");
   await page.click("button:has-text('接続テスト')");
   await page.waitForSelector("text=OK (v", { timeout: 10000 });
