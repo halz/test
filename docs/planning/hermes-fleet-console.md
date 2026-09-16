@@ -1,16 +1,16 @@
 # Hermes Desktop 複数マシン一元管理アプリ — プラニング
 
-作成日: 2026-09-16
-状態: **ドラフト（レビュー待ち）**。「未確定事項」の回答を受けてから実装に着手する。
+作成日: 2026-09-16 / 更新: 2026-09-16（要件回答を反映）
+状態: **要件確定。Phase 0 スパイクから着手可能。**
 
 ---
 
 ## 0. 要約
 
-- 目的: Hermes Desktop（= `hermes serve` バックエンド）を入れた複数マシンを **1 画面で監視し、まとめて操作** できるアプリを作る。
-- 前提調査の結論: 各マシンには既に管理用 HTTP API が 2 系統ある（ダッシュボード API と API サーバー）。**マシン側に独自エージェントを新規に入れる必要はない**。作るのは、それらを束ねる薄い「コントロールプレーン」＋UI。
-- 推奨形態: **自前ホストの Web コンソール**（Node/TypeScript + React、単一コンテナ）。理由は §3。
-- MVP のスコープ: マシン登録 / 一覧ヘルス表示 / ゲートウェイ起動停止再起動 / 一括アップデート / 任意のマシン群へプロンプト送信と結果の並列表示。§5 参照。
+- 目的: Hermes Desktop（= `hermes serve` バックエンド）を入れた **Mac 5 台 + Windows 11 1 台** を、1 つの Web コンソールから監視・一括操作・オーケストレーションする。
+- 前提調査の結論: 各マシンには既に管理用 HTTP API が 3 系統ある（ダッシュボード :9119、API サーバー :8642、A2A :9900）。**マシン側に独自エージェントを新規に入れる必要はない**。作るのは、それらを束ねる薄い「コントロールプレーン」＋UI。
+- 形態: **自前ホストの Web コンソール**（Node/TypeScript + React + SQLite、単一プロセス／単一コンテナ）。Mac のうち常時稼働の 1 台にホストし、Tailscale 経由でどこからでも開く。
+- 優先順位（ユーザー指定）: 監視 → 一括更新 → プロンプト送信 → 設定配布 → cron・セッション横断 → オーケストレーション。この順でフェーズを切る（§5）。
 
 ---
 
@@ -24,7 +24,7 @@
 | 通信 | `tui_gateway` の JSON-RPC over WebSocket。既定は `127.0.0.1:9119` |
 | 既存のマルチ接続機能 | Settings → Gateways に Local / Remote(token, OAuth) / SSH / Hermes Cloud を登録できる。**ただしワークスペースは常に 1 ゲートウェイのみアクティブ**。複数の同時表示・一括操作は未実装（Issue #45779、P3、open） |
 | 既存の「まとめて更新」 | 登録済みゲートウェイの一括アップデートは Desktop にある（Cloud は除外） |
-| ゲートウェイ間連携 | `hermes peer add <name> --url http://host:8642 --key <API_SERVER_KEY>` で別マシンのエージェント同士がメッセージ可能 |
+| 設定の置き場 | macOS: `~/.hermes`、Windows: `%LOCALAPPDATA%\hermes`。`config.yaml` と `.env` |
 
 ### 1.2 各マシンが公開できる API（これを束ねる）
 
@@ -40,154 +40,197 @@
   - cron: `/api/cron/jobs` CRUD + pause/resume/trigger
   - 設定: `GET/PUT /api/config`、`GET/PUT/DELETE /api/env`（`?profile=` でプロファイル指定可）
   - セッション: `/api/sessions`（一覧・検索・エクスポート・削除）
-  - スキル/MCP/チャネル/ペアリング等
-  - WebSocket: `/api/ws`（チャット）、`/api/pty`（TUI、POSIX のみ）
-- 認証方式: ループバック以外にバインドすると **fail-closed で認証必須**。提供者は (1) ユーザー名/パスワード（scrypt + HMAC 署名の stateless セッション、LAN/VPN 向け）(2) Nous Portal OAuth（アクセストークン 15 分、v1 はリフレッシュ無し）(3) 自前 OIDC（リフレッシュあり）(4) プラグインで Bearer トークン提供者を追加可能
+  - スキル: `/api/skills`、`/api/skills/hub/install|update`。MCP: `/api/mcp/servers`
+  - WebSocket: `/api/ws`（チャット）、`/api/pty`（TUI、POSIX のみ → Windows 機では使えない）
+- 認証方式: ループバック以外にバインドすると **fail-closed で認証必須**。提供者は (1) ユーザー名/パスワード（scrypt + HMAC 署名の stateless セッション、LAN/VPN 向け）(2) Nous Portal OAuth（アクセストークン 15 分、リフレッシュ無し）(3) 自前 OIDC（リフレッシュあり）(4) プラグインで Bearer トークン提供者を追加可能
 
 **B. API サーバー（既定ポート 8642、`API_SERVER_ENABLED=true`）** — エージェント操作の主戦場
 
 - 認証: `Authorization: Bearer <API_SERVER_KEY>` の静的キー。ヘッドレスなクライアントに最も扱いやすい
-- `GET /health`（無認証 liveness）、`GET /health/detailed`（設定・DB・モデル・ディスク・実行中 run）
-- `POST /v1/runs` → `GET /v1/runs/{id}/events`（SSE）/ `stop` / `approval`。冪等キー対応
-- `/api/sessions/*`（作成・履歴・fork・単発チャット）
-- `/api/jobs/*`（スケジュールジョブ CRUD）
+- `GET /health`（無認証）、`GET /health/detailed`（設定・DB・モデル・ディスク・実行中 run）
+- `POST /v1/runs` → `GET /v1/runs/{id}/events`（SSE）/ `stop` / `approval`。`Idempotency-Key` 対応
+- `/api/sessions/*`（作成・履歴・fork・単発チャット）、`/api/jobs/*`（スケジュールジョブ）
 - `GET /v1/capabilities`（API 面の機械可読な記述 → バージョン差の吸収に使う）
 - 制約: 同時 run 上限 10（設定可）、ファイルアップロード不可
 
-### 1.3 セキュリティ上の前提（公式ドキュメントより）
+**C. A2A（既定ポート 9900、`hermes tools enable a2a`）** — エージェント同士の連携
 
-- API サーバーとダッシュボードは **端末コマンド実行を含む全権** を渡す。公開インターネットに素で出さない。
-- 推奨: Tailscale/WireGuard 等の私設ネットワークにバインド、非 root、コンテナ系 terminal backend、`approvals.unattended_mode: deny`、YOLO 無効。
-- ダッシュボードは `Host` ヘッダ厳格一致（DNS rebinding 対策）。リバースプロキシ経由なら `dashboard.public_url` と `trusted_proxies` の設定が必要。
+- 標準 Agent2Agent プロトコル v1.0。`GET /.well-known/agent-card.json` で能力を公開、`POST /` の JSON-RPC で `SendMessage` 等
+- エージェント内ツール: `a2a_call(agent, message)`、`a2a_discover(url)`、`a2a_orchestrate(capability, message, mode)`（能力を持つピアにタスクを配る）
+- ピアは `config.yaml` の `a2a_agents:` に URL と Bearer トークンで登録。トークン無しならループバックのみ
+- ループ防止（1 コンテキスト既定 5 ターン）、監査ログ `~/.hermes/a2a_audit.jsonl`
 
----
+### 1.3 マシン間オーケストレーションに使える／使えないもの
 
-## 2. 前提と、確認したい未確定事項
-
-**作業上の前提（回答が無ければこの前提で進める）**
-
-1. 管理対象は 2〜20 台程度の個人／小規模チーム所有マシン。数百台規模の運用ツールではない。
-2. 全マシンは同一の私設ネットワーク（LAN または Tailscale）から到達できる。
-3. 各マシンで `hermes serve`（またはダッシュボード）を **ループバック以外にバインドし直し、認証を設定できる**。Desktop が自動起動する `127.0.0.1:9119` のままでは外から届かない。
-4. 利用者は当面 1 人（自分）。チーム利用は後回し。
-
-**未確定事項（回答が設計に影響する）**
-
-| # | 質問 | 影響 |
+| 機構 | 範囲 | 備考 |
 |---|---|---|
-| Q1 | 台数と OS の内訳（Windows / macOS / Linux）は？ | 登録スクリプトの対応 OS、サービス管理（systemd / launchd / Windows） |
-| Q2 | マシン同士のネットワークは LAN / Tailscale / インターネット越しのどれ？ | 認証方式（パスワードで足りるか、OIDC が必要か）、TLS の要否 |
-| Q3 | アプリの形態の希望: (a) ブラウザで開く Web コンソール (b) 手元の PC 用デスクトップアプリ (c) Hermes Desktop のプラグイン | §3 で比較。推奨は (a) |
-| Q4 | 「操作」で最優先なのはどれ？ ①監視・状態確認 ②一括アップデート/再起動 ③複数マシンへプロンプト送信 ④設定/スキルの配布 ⑤cron・セッションの横断管理 | MVP の順番 |
-| Q5 | 各マシンで既に Telegram 等のメッセージングゲートウェイを動かしている？ | 通知（オフライン検知等）を Hermes 自身の配信経路に乗せられる |
-| Q6 | 利用者は自分だけ？ 将来チームで共有？ | コンソール自体の認証設計（単一管理者 vs OIDC） |
+| `delegate_task`（サブエージェント） | **同一マシン内のみ** | 並列 10、ネスト深さ既定 1 |
+| `hermes kanban` | **同一マシン内のプロファイルのみ** | ディスパッチャは `profile_exists` で判定。リモート配布は無し |
+| `hermes peer dm` | マシン間 | 相手の API サーバー :8642 経由で 1 ターン実行し返答を返す |
+| A2A（`a2a_call` / `a2a_orchestrate`） | マシン間 | 標準プロトコル。能力ベースのファンアウトあり |
+| API サーバー `/v1/runs` | マシン間（コンソールから） | 本コンソールが直接使う経路 |
+
+### 1.4 セキュリティ上の前提（公式ドキュメントより）
+
+- API サーバー／ダッシュボード／A2A は **端末コマンド実行を含む全権** を渡す。公開インターネットに素で出さない。
+- 推奨: Tailscale 等の私設ネットワークにバインド、非 root、`approvals.unattended_mode: deny`、YOLO 無効。
+- ダッシュボードは `Host` ヘッダ厳格一致（DNS rebinding 対策）。Tailscale の MagicDNS 名で統一する。
 
 ---
 
-## 3. 形態の比較と推奨
+## 2. 確定した要件と前提
+
+| 項目 | 決定 |
+|---|---|
+| 対象台数・OS | macOS × 5、Windows 11 × 1 |
+| ネットワーク | 同一 LAN。インターネット接続あり。**Tailscale を採用**（LAN 内でも外出先でも同じ URL、MagicDNS、ACL で閉じられる） |
+| 形態 | **Web コンソール**（§3 の案 (a)） |
+| 必要機能 | 監視 / 一括更新 / プロンプト送信 / 設定配布 / cron・セッション横断 / **オーケストレーション** |
+| 利用者 | 本人のみ → コンソールは単一管理者パスワード。RBAC・マルチユーザーは対象外 |
+
+**残る前提（回答が無ければこのまま進める）**
+
+- 各マシンで Telegram 等のメッセージングゲートウェイは動かしていない前提。アラート通知は当面コンソール内表示 + Webhook（任意）。動かしている場合は Hermes の配信経路に乗せられる（Phase 5 で選択）。
+- コンソールをホストする Mac は 1 台選ぶ（常時起動・スリープしないもの）。Windows 機にホストしない（PTY 等 POSIX 限定機能の検証用に残す）。
+- Windows 機は Hermes をネイティブ実行（WSL ではない）とみなす。WSL の場合は §6 の手順を WSL 用に読み替える。
+
+---
+
+## 3. 形態の比較（決定済み: (a)）
 
 | 案 | 概要 | 長所 | 短所 |
 |---|---|---|---|
-| **(a) 自前ホスト Web コンソール（推奨）** | Node/TS の小さなサーバー + React SPA。マシン登録とシークレットはサーバー側に保持し、各マシンの API を代理呼び出し | どの端末（スマホ含む）からも見える／常駐してポーリング・アラートが出せる／既存 API を呼ぶだけで済む／後で Electron/Tauri に包める | ホスト先が 1 台必要（NAS・VPS・手元 PC のどれかで可） |
-| (b) 専用デスクトップアプリ（Tauri/Electron） | (a) の UI をローカルアプリ化 | インストールだけで使える | 閉じている間は監視できない／マシン間で設定が同期しない／(a) より工数増 |
-| (c) Hermes Desktop プラグイン | Desktop Plugin SDK（ESM 1 ファイル、ホットリロード）でページを追加 | 既存 UI に溶け込む | SDK はプラグインに **トークンのバイトを渡さない**（`host.connections()` はラベルと種別のみ）ため、他ゲートウェイの API を自由に叩けるか未確認。上流仕様に強く依存 |
-| (d) 何も作らず既存機能で済ます | Desktop の Gateways 登録 + `hermes peer` | 工数ゼロ | 同時表示・一括操作・アラートが無い。2〜3 台ならこれで足りる可能性はある |
-
-**推奨: (a)。** 「一元管理・操作」の本質は横断表示と一括操作であり、それは常駐する集約サーバーが最も素直に実現できる。(c) は魅力的だが SDK の制約を確認するスパイクが必要で、確認できた時点で (a) のフロントを Desktop プラグインとして再パッケージする道も残る。
-
-(d) について正直に言うと、台数が 2〜3 台で「見たい時に見る」だけなら Desktop の既存機能で十分。作る価値が出るのは「複数台を同時に眺めたい」「まとめて更新・再起動したい」「落ちたら気づきたい」のいずれかがある場合。
+| **(a) 自前ホスト Web コンソール（採用）** | Node/TS の小さなサーバー + React SPA。マシン登録とシークレットはサーバー側に保持し、各マシンの API を代理呼び出し | どの端末（スマホ含む）からも見える／常駐してポーリング・アラートが出せる／既存 API を呼ぶだけで済む | ホスト先が 1 台必要（Mac のうち 1 台で可） |
+| (b) 専用デスクトップアプリ | (a) の UI をローカルアプリ化 | インストールだけで使える | 閉じている間は監視できない |
+| (c) Hermes Desktop プラグイン | Desktop Plugin SDK でページを追加 | 既存 UI に溶け込む | SDK はプラグインにトークンのバイトを渡さないため他ゲートウェイ API を自由に叩けるか未確認 |
+| (d) 既存機能で済ます | Desktop の Gateways 登録 + `hermes peer` | 工数ゼロ | 同時表示・一括操作・アラート・オーケストレーションが無い。6 台では不足 |
 
 ---
 
-## 4. アーキテクチャ（案 (a)）
+## 4. アーキテクチャ
 
 ```mermaid
 flowchart LR
-  subgraph Console["Fleet Console（1 台にホスト）"]
+  subgraph Console["Fleet Console（常時稼働の Mac 1 台にホスト）"]
     UI["React SPA"]
-    API["Node/TS サーバー<br/>登録・認証・代理呼び出し・ポーリング・監査ログ"]
-    DB[("SQLite<br/>machines / secrets(暗号化) / audit / alerts")]
+    API["Node/TS サーバー<br/>登録・認証・代理呼び出し・ポーリング<br/>プレイブック実行・監査ログ"]
+    DB[("SQLite<br/>machines / secrets(暗号化) / runs / audit / alerts")]
     UI <--> API
     API <--> DB
   end
 
-  subgraph M1["マシン 1（Hermes Desktop 入り）"]
+  subgraph Mac1["mac-1 (Tailscale)"]
     D1["dashboard/serve :9119"]
     A1["api_server :8642"]
+    P1["a2a :9900"]
   end
-  subgraph M2["マシン 2"]
-    D2["dashboard/serve :9119"]
-    A2["api_server :8642"]
+  subgraph Mac2["mac-2 … mac-5"]
+    D2["同上"]
   end
-  subgraph Mn["マシン N"]
-    Dn["..."]
+  subgraph Win["win-1 (Tailscale)"]
+    Dw["dashboard/serve :9119"]
+    Aw["api_server :8642"]
+    Pw["a2a :9900"]
   end
 
-  API -- "REST / SSE / WS<br/>(Tailscale 等の私設網)" --> D1 & A1 & D2 & A2 & Dn
+  API -- "REST / SSE / WS<br/>Tailscale (100.x / MagicDNS)" --> D1 & A1 & D2 & Dw & Aw
+  P1 <-- "A2A メッシュ（エージェント同士）" --> Pw
+  P1 <--> D2
 ```
 
 **構成方針**
 
-- **マシン側に追加ソフトを入れない。** 使うのは Hermes 標準の 2 API のみ。登録時に「有効化チェックリスト」（§6）を案内する。
-- **サーバーが唯一の秘密保持者。** API キーやダッシュボードのセッションはサーバー側で暗号化保存。ブラウザにはマシンの認証情報を渡さない。
-- **代理呼び出し（proxy）＋ 集約。** `GET /fleet/overview` のような集約エンドポイントは、各マシンの `/api/status`・`/health/detailed`・`/api/system/stats` を並列に叩いて 1 レスポンスにまとめる。
-- **ポーリングは控えめ。** 既定 30 秒、画面を開いている間だけ短縮（5〜10 秒）。SSE で UI に押し出す。
+- **マシン側に追加ソフトを入れない。** 使うのは Hermes 標準の API のみ。登録時に「有効化チェックリスト」（§6）を案内する。
+- **サーバーが唯一の秘密保持者。** API キーやダッシュボードのセッションはサーバー側で暗号化保存（OS キーチェーン不要、マスターキーは起動時に環境変数または初回設定で生成）。ブラウザにはマシンの認証情報を渡さない。
+- **代理呼び出し＋集約。** `GET /fleet/overview` は各マシンの `/api/status`・`/health/detailed`・`/api/system/stats` を並列に叩いて 1 レスポンスにまとめる。
+- **ポーリングは控えめ。** 既定 30 秒、画面を開いている間だけ 5〜10 秒。SSE で UI に押し出す。
 - **バージョン差の吸収。** 各マシンの `/v1/capabilities` と `/api/status` のバージョンを保存し、未対応 API はボタンを無効化する（Hermes は更新が速い）。
+- **すべて Tailscale アドレスにバインド。** LAN 直アドレスは使わない（家でも外でも URL が変わらない、DNS rebinding 対策の `Host` 一致が MagicDNS 名で安定する）。
 
 **技術スタック（最小）**
 
 | 層 | 選定 | 理由 |
 |---|---|---|
-| サーバー | Node 22 + TypeScript + Hono（または Fastify） | SSE/WS 中継と並列 fetch が簡潔。単一バイナリ化・Docker 化が容易 |
-| DB | SQLite（better-sqlite3） | 台数規模に対して十分。バックアップがファイルコピーで済む |
-| フロント | React + Vite + TanStack Query | Hermes 自身のダッシュボード／Desktop と同じ系統で、将来プラグイン化しやすい |
-| 配布 | Docker イメージ 1 つ + `docker compose` | NAS/VPS/手元 PC どこでも同じ手順 |
-
-Python（FastAPI）で書く選択肢もある（Hermes 本体が Python）。Hermes のコードを import して再利用したい場面が出るなら Python に切り替える。現時点では API 越しにしか触らないので言語は問わず、フロントと同じ TS に寄せる。
+| サーバー | Node 22 + TypeScript + Hono | SSE/WS 中継と並列 fetch が簡潔。単一プロセスで完結 |
+| DB | SQLite（better-sqlite3） | 6 台規模に十分。バックアップがファイルコピー |
+| フロント | React + Vite + TanStack Query | Hermes 自身のダッシュボード／Desktop と同系統 |
+| 配布 | `npm run build` → launchd で常駐（Mac ホスト）。Docker は任意 | Mac 1 台に置くだけなので Docker 必須にしない |
+| 公開 | `http://<console-host>.<tailnet>.ts.net:8080`。必要なら `tailscale serve` で HTTPS | Tailscale ACL で本人のデバイスのみ許可 |
 
 **認証の使い分け（重要な設計判断）**
 
 | 経路 | 用途 | 認証 | 備考 |
 |---|---|---|---|
 | API サーバー :8642 | プロンプト送信 / run 監視 / jobs / sessions / health | 静的 Bearer キー | ヘッドレスに最適。**主経路** |
-| ダッシュボード :9119 | ゲートウェイ起動停止 / 更新 / doctor / ログ / system stats / config | ユーザー名+パスワード提供者でログインしてセッション取得 | OAuth(Nous) は 15 分で切れリフレッシュ無し → ヘッドレス不向き。OIDC はリフレッシュ可。**ログイン手順は Phase 0 でスパイク検証** |
+| ダッシュボード :9119 | ゲートウェイ起動停止 / 更新 / doctor / ログ / system stats / config / cron / skills | ユーザー名+パスワード提供者でログインしてセッション保持 | Nous OAuth は 15 分で切れリフレッシュ無し → 不向き。**ログイン手順は Phase 0 で実機検証** |
+| A2A :9900 | エージェント同士（コンソールは設定配布と監査ログ閲覧のみ） | ピア毎の Bearer トークン | コンソールが鍵を生成して全台に配る |
 
 ---
 
-## 5. スコープとフェーズ
+## 5. フェーズ（ユーザー指定の優先順位順）
 
-### Phase 0 — スパイク（1〜2 日）　→ 検証: 3 つの YES/NO を確定する
+### Phase 0 — スパイク（1〜2 日、実機: Mac 1 台 + Windows 機）
 
-1. ダッシュボードの **パスワード提供者に対してプログラムからログインし、セッションを保持して `/api/gateway/restart` を呼べる** か。（エンドポイントとクッキー仕様の実確認）
-2. API サーバーの `/v1/runs` + SSE を **2 台同時** に扱い、イベントを 1 つの UI に流せるか。
-3. Windows 機で `hermes serve --host <tailscale-ip>` と `API_SERVER_ENABLED=true` を常駐させられるか（サービス化手順）。
-
-→ 1 が NO なら「管理操作は SSH 経由で `hermes gateway restart` を叩く」に切り替える（Desktop の SSH 接続と同じ発想）。
-
-### Phase 1 — MVP（監視 + 基本操作）
-
-| 機能 | 検証（受け入れ基準） |
+| 検証項目 | 合格条件 |
 |---|---|
-| マシン登録（名前・URL 2 つ・認証情報・タグ）と接続テスト | 登録画面から Test を押すと 9119/8642 の両方に到達可否と Hermes バージョンが表示される |
-| フリート一覧 | 各マシンのカードに online/offline、バージョン、ゲートウェイ状態、アクティブセッション数、CPU/メモリ/ディスク、更新有無が出る。オフライン機は 60 秒以内に赤くなる |
-| 単体・一括: ゲートウェイ start/stop/restart | 3 台選択 → restart → 全台で `/api/status` の gateway 状態が running に戻る。実行前に確認ダイアログ |
-| 単体・一括: `hermes update` | 実行後、各マシンのバージョンが更新される。進行はアクション状態 API で追跡 |
-| プロンプト送信（1 台 / 複数台） | 選択した N 台に同じプロンプトを `/v1/runs` で投げ、SSE の進捗と最終回答を並べて表示。stop ボタンで中断できる |
-| 監査ログ | 誰が・いつ・どのマシンに・何を実行したかが残る |
-| コンソール自体の認証 | 単一管理者パスワード（初回起動時設定）。未ログインでは何も見えない |
+| ダッシュボードのパスワード認証にプログラムからログインし、セッションを保持して `POST /api/gateway/restart` を呼べる | curl/Node スクリプトで再現。セッションの有効期限と再ログイン条件が分かる |
+| Hermes Desktop が起動する `127.0.0.1:9119` の serve と、Tailscale アドレスにバインドした serve の共存方法 | 「別ポートで 2 本」か「Desktop 側を Remote 接続に切り替えて 1 本」のどちらかが動く |
+| Windows 11 で `hermes serve --host <tailscale-ip>` と `API_SERVER_ENABLED=true` を常駐させられる | タスクスケジューラ（ログオン時）で再起動後も `/api/status` が返る |
+| API サーバー `/v1/runs` + SSE を 2 台同時に扱える | 2 本の SSE を 1 プロセスで受け、イベントを区別して表示 |
 
-### Phase 2 — 横断管理
+→ 1 つ目が NO なら「管理操作は SSH で `hermes gateway restart` 等を叩く」に切り替える。
 
-- セッション横断検索（各マシンの `/api/sessions/search` を集約）
-- cron/jobs の横断一覧・作成・一時停止（`/api/cron/jobs`、`/api/jobs`）
-- ログの複数台同時 tail
-- アラート: オフライン、ディスク/メモリ圧迫、更新あり。通知先は Hermes 自身の cron/Telegram 配信を使う（Q5）か、Webhook で外部へ
+### Phase 1 — 監視（MVP）
 
-### Phase 3 — 配布・同期
+| 機能 | 受け入れ基準 |
+|---|---|
+| マシン登録（名前・Tailscale ホスト名・ポート・認証情報・タグ）と接続テスト | Test で 9119/8642 の到達可否と Hermes バージョンが表示される |
+| フリート一覧 | 6 枚のカードに online/offline、バージョン、ゲートウェイ状態、アクティブセッション数、CPU/メモリ/ディスク、更新有無。オフライン機は 60 秒以内に赤くなる |
+| マシン詳細 | `/health/detailed` の内容、直近ログ 200 行、直近セッション 20 件 |
+| コンソール自体の認証 | 初回起動時に管理者パスワード設定。未ログインでは何も見えない |
+| 監査ログ | いつ・どのマシンに・何を実行したかが残る（以降の全フェーズで共通） |
 
-- 設定断片（`config.yaml` の指定キー）・`.env` の一部・スキル・MCP サーバー定義を選択マシン群へ push（`PUT /api/config`、`/api/skills/hub/install` 等）。差分プレビュー → 適用の 2 段階
-- プロファイルのエクスポート/インポートによる「テンプレ機」の複製
-- `hermes peer` の登録をコンソールから一括投入（マシン同士のメッシュ化）
+### Phase 2 — 一括更新・一括操作
+
+| 機能 | 受け入れ基準 |
+|---|---|
+| 単体・一括: gateway start/stop/restart | 3 台選択 → restart → 全台で gateway 状態が running に戻る。実行前に対象一覧と確認ダイアログ |
+| 単体・一括: `hermes update` | **カナリア方式**: 1 台で成功（バージョン上昇 + `/api/status` 正常）してから残りに展開。失敗時はそこで停止 |
+| 一括: doctor / security-audit / backup | `/api/actions/{name}/status` を追跡し、結果を並べて表示 |
+
+### Phase 3 — プロンプト送信
+
+| 機能 | 受け入れ基準 |
+|---|---|
+| 1 台へのプロンプト | `/v1/runs` で実行、SSE の進捗（tool.started 等）と最終回答を表示。stop で中断、approval 要求に応答できる |
+| 複数台へ同時送信 | 選択 N 台に同じプロンプト（マシン名などの変数展開あり）を投げ、結果を横並び表示。`Idempotency-Key` で再送安全 |
+| セッション継続 | 同じマシンへの続き質問が `X-Hermes-Session-Id` で同一セッションに乗る |
+
+### Phase 4 — 設定配布
+
+| 機能 | 受け入れ基準 |
+|---|---|
+| `config.yaml` の指定キーを選択マシンへ push | 現在値との差分プレビュー → 適用の 2 段階。`?profile=` 対応 |
+| `.env` の指定変数を push（API キー等） | 値は画面に出さず「設定済み/未設定」のみ表示 |
+| スキル / MCP サーバー定義の一括インストール | `/api/skills/hub/install`、`/api/mcp/servers` を全台に適用し結果を表示 |
+| テンプレ機からの複製 | 1 台の config スナップショットを保存し、他のマシンに適用できる |
+
+### Phase 5 — cron・セッション横断
+
+| 機能 | 受け入れ基準 |
+|---|---|
+| cron の横断一覧・作成・pause/resume/trigger | 6 台分が 1 表に並び、どのマシンのジョブかが分かる。複数台に同じジョブを作れる |
+| セッション横断検索 | `/api/sessions/search` を全台に投げて統合表示。クリックで履歴を開く |
+| ログ複数台 tail | 選んだマシンのログを 1 画面で追える |
+| アラート | オフライン、ディスク/メモリ圧迫、更新あり、cron 失敗。コンソール内表示 + 任意の Webhook |
+
+### Phase 6 — オーケストレーション（§7 に設計詳細）
+
+| 機能 | 受け入れ基準 |
+|---|---|
+| プレイブック（コンソール主導） | 「mac-1 で A → 結果を win-1 の B に渡す → mac-2〜5 に並列で C」のような定義を保存・実行・再実行できる。各ステップの run と結果が残る |
+| A2A メッシュのブートストラップ（エージェント主導） | コンソールが 6 台分のトークンを生成し `a2a_agents:` と `A2A_PEER_TOKENS` を配布。任意の 1 台から `a2a_orchestrate` で他 5 台に配れることを確認 |
+| メッシュの可視化 | 各台の `a2a_audit.jsonl` を集約し、誰が誰に何を頼んだかをタイムライン表示 |
 
 ### 明示的にやらないこと
 
@@ -195,67 +238,118 @@ Python（FastAPI）で書く選択肢もある（Hermes 本体が Python）。He
 - Hermes Desktop の GUI 自体の遠隔操作（画面共有的なもの）
 - 数百台規模のスケール、RBAC、マルチテナント
 - 自前の LLM 呼び出し。エージェント実行はすべて各マシンの Hermes に委ねる
+- kanban のマシン間拡張（上流が同一マシン限定と明言。必要なら上流に提案）
 
 ---
 
 ## 6. マシン側の有効化チェックリスト（登録時に案内する内容）
 
-各マシンで 1 回だけ実施する。
+各マシンで 1 回だけ実施する。コンソールの登録画面に、マシン名を埋め込んだ状態でこの手順を表示する。
+
+**共通（`HERMES_HOME/.env`）**
 
 ```bash
-# 1. API サーバーを有効化（~/.hermes/.env）
+# API サーバー
 API_SERVER_ENABLED=true
-API_SERVER_KEY=<32 バイト以上のランダム>
-API_SERVER_HOST=<Tailscale/LAN の IP>   # 既定は 127.0.0.1
+API_SERVER_KEY=<32 バイト以上のランダム。コンソールが生成して表示>
+API_SERVER_HOST=<このマシンの Tailscale IP (100.x.y.z)>
 API_SERVER_PORT=8642
 
-# 2. ダッシュボード/serve を私設網にバインドし、パスワード認証を設定
+# ダッシュボード認証（パスワード提供者）
 HERMES_DASHBOARD_BASIC_AUTH_USERNAME=admin
-HERMES_DASHBOARD_BASIC_AUTH_PASSWORD_HASH="scrypt$..."
-HERMES_DASHBOARD_BASIC_AUTH_SECRET=<32 バイト以上>   # 固定にするとセッションが再起動をまたいで有効
-hermes serve --host <Tailscale/LAN の IP> --port 9119    # サービス化して常駐
+HERMES_DASHBOARD_BASIC_AUTH_PASSWORD_HASH="scrypt$..."   # hermes の生成コマンドで作る
+HERMES_DASHBOARD_BASIC_AUTH_SECRET=<32 バイト以上。固定にするとセッションが再起動をまたいで有効>
 
-# 3. 安全側の既定
-#   approvals.unattended_mode: deny / YOLO 無効 / 非 root / terminal backend は docker 等
+# 安全側の既定（config.yaml）
+#   approvals.unattended_mode: deny
+#   YOLO 無効、非 root
 ```
 
-- Windows は `%LOCALAPPDATA%\hermes` 配下。常駐はタスクスケジューラかサービス化（Phase 0 で手順を確定）。
-- 公開インターネット越しにするなら、TLS 終端付きリバースプロキシ + OIDC を必須にする。パスワード認証は VPN 内限定。
+**macOS × 5（`~/.hermes`）**
+
+```bash
+# Tailscale アドレスにバインドした serve を launchd で常駐
+hermes serve --host <tailscale-ip> --port 9119   # Phase 0 の結果次第で Desktop 側と共存方法を確定
+# ~/Library/LaunchAgents/ai.hermes.serve-fleet.plist として登録、RunAtLoad + KeepAlive
+# スリープ抑止: caffeinate または「電源アダプタ接続時はスリープしない」
+```
+
+**Windows 11 × 1（`%LOCALAPPDATA%\hermes`）**
+
+```powershell
+# タスクスケジューラ: ログオン時に hermes serve --host <tailscale-ip> --port 9119 を起動、失敗時再起動
+# 電源設定でスリープ無効
+# 注意: /api/pty（埋め込み TUI）は POSIX 限定のため、この機はチャットのみ /api/ws 経由
+```
+
+**Tailscale**
+
+- 6 台 + コンソール閲覧端末（スマホ等）を同一 tailnet に参加。MagicDNS 有効。
+- ACL: 9119 / 8642 / 9900 はコンソールホストと本人の端末からのみ許可。
+- 公開インターネットには一切出さない。TLS はコンソールに `tailscale serve` を使う場合のみ。
 
 ---
 
-## 7. リスクと対策
+## 7. オーケストレーション設計
+
+2 層に分けて、まず決定論的な層から作る。
+
+**層 1: コンソール主導のプレイブック（Phase 6 前半）**
+
+- 定義は YAML/JSON。ステップ = `{ targets: [machine or tag], prompt: template, mode: parallel|sequential, pass_result_to: next }`。
+- 実行エンジンはコンソール内。各ステップは対象マシンの `/v1/runs` を叩き、SSE で完了を待ち、結果を次ステップのテンプレート変数に渡す。
+- 失敗時のポリシー: stop / continue / retry(N)。全ステップの run_id・結果・所要時間を SQLite に保存し、再実行可能。
+- 利点: 何が起きたかがコンソールに全部残る。エージェントに「他のマシンを使う判断」をさせない分、予測可能。
+- 制約: 動的な分担（「空いてる機に振る」等）はコンソール側のルールで実装する必要がある。
+
+**層 2: A2A メッシュ（Phase 6 後半）**
+
+- コンソールが各マシンの A2A を有効化し、ピア一覧と Bearer トークンを `config.yaml` / `.env` に配布（Phase 4 の設定配布を再利用）。
+- 1 台を「オーケストレーター役」に指定（例: 最も性能の高い Mac）。そこにコンソールからプロンプトを投げると、エージェントが `a2a_orchestrate(capability, ...)` で他 5 台に配る。
+- 役割分担は各マシンの Agent Card（skills）で表現。例: win-1 は "windows-build"、mac-2 は "gpu-inference"。
+- 監査: 各台の `~/.hermes/a2a_audit.jsonl` をコンソールが取得（`/api/logs` かファイル同期）し、タイムライン表示。ループ上限（既定 5 ターン）はそのまま使う。
+- 利点: エージェントが自律的に分担できる。制約: 何が起きたかを追うのに監査ログが必須、A2A の成熟度に依存。
+
+**選び方**: 定型バッチ（全台の状態確認、同じ作業の並列実行、順次パイプライン）は層 1。探索的・分岐の多いタスクは層 2。両方とも最終的な実行は各マシンの Hermes に任せ、コンソールは LLM を呼ばない。
+
+---
+
+## 8. リスクと対策
 
 | リスク | 対策 |
 |---|---|
-| Hermes の API が頻繁に変わる（Desktop は 2026-06 公開、peer は v0.21 追加など） | 対応バージョンをピン留めし、`/v1/capabilities` と `/api/status` のバージョンで機能を出し分ける。E2E テストは実機 1 台で毎リリース回す |
+| Hermes の API が頻繁に変わる（Desktop は 2026-06 公開、peer は v0.21、A2A も新しい） | 対応バージョンをピン留めし、`/v1/capabilities` と `/api/status` のバージョンで機能を出し分ける。実機 1 台で毎リリース E2E |
 | ダッシュボード認証がヘッドレスで扱いにくい | Phase 0 で確定。ダメなら SSH フォールバック |
-| コンソールが「全マシンの端末権限」を持つ単一障害点になる | 秘密は暗号化保存、コンソール自体に認証、破壊的操作は確認+監査ログ、私設網のみ |
-| 一括操作の事故（全台 stop 等） | 一括は必ず対象一覧を表示して確認。`update` は 1 台で成功してから残りに展開する「カナリア」オプション |
-| Desktop 起動中のローカル `hermes serve`（127.0.0.1:9119）と外向き serve の二重起動 | 同一マシンで別プロファイル/別ポートを使うか、Desktop 側を Remote 接続に切り替える手順を明記 |
+| コンソールが「全マシンの端末権限」を持つ単一障害点になる | 秘密は暗号化保存、コンソール自体に認証、破壊的操作は確認 + 監査ログ、Tailscale ACL で閉じる |
+| 一括操作の事故（全台 stop、全台 update 失敗） | 一括は対象一覧を表示して確認。update はカナリア方式 |
+| Desktop 起動中の `127.0.0.1:9119` と Tailscale 向け serve の二重起動 | Phase 0 で共存方法を確定し、§6 の手順に反映 |
+| Windows 機だけ挙動が違う（PTY 不可、サービス化手順、パス） | Phase 0 で検証。機能差は UI 上で「この機では使えない」と明示 |
+| A2A メッシュでエージェントがループ・暴走する | ターン上限を既定のまま、`approvals.unattended_mode: deny`、YOLO 禁止。プレイブック（層 1）を先に作り、層 2 は後 |
+| Mac のスリープで監視が途切れる | ホスト機は電源接続 + スリープ無効。他の Mac はオフラインをアラートとして扱う（異常ではなく状態として表示） |
 
 ---
 
-## 8. リポジトリ構成案（実装時）
+## 9. リポジトリ構成案（実装時）
 
 ```
 .
 ├── apps/
-│   ├── server/      # Hono + TypeScript。/api/fleet/*, /api/machines/*, SSE 中継
-│   └── web/         # React + Vite
+│   ├── server/          # Hono + TypeScript。/api/fleet/*, /api/machines/*, /api/playbooks/*, SSE 中継
+│   └── web/             # React + Vite
 ├── packages/
-│   └── hermes-client/   # 9119 / 8642 の型付きクライアント（capabilities で機能検出）
-├── docker-compose.yml
-└── docs/planning/   # 本書
+│   └── hermes-client/   # 9119 / 8642 / 9900 の型付きクライアント（capabilities で機能検出）
+├── scripts/
+│   └── enroll/          # §6 の有効化スクリプト（macOS 用 .sh、Windows 用 .ps1）
+└── docs/planning/       # 本書
 ```
 
 ---
 
-## 9. 次のアクション
+## 10. 次のアクション
 
-1. §2 の Q1〜Q6 に回答をもらう（特に Q3 形態、Q4 優先順位）。
-2. Phase 0 のスパイクを実機 2 台（できれば OS 混在）で実施し、結果を本書に追記。
-3. Phase 1 の受け入れ基準を Issue 化して着手。
+1. **Phase 0 スパイク**を Mac 1 台 + Windows 機で実施し、4 項目の結果を本書に追記。
+2. Phase 1（監視）の受け入れ基準を Issue 化して着手。`packages/hermes-client` から作る。
+3. Phase 2 以降は 1 フェーズずつ PR を分け、各 PR に受け入れ基準の達成証跡（スクリーンショットまたはログ）を付ける。
 
 ---
 
@@ -266,8 +360,10 @@ hermes serve --host <Tailscale/LAN の IP> --port 9119    # サービス化し�
 - 複数ゲートウェイ運用: https://hermes-agent.nousresearch.com/docs/user-guide/multi-profile-gateways
 - API サーバー: https://hermes-agent.nousresearch.com/docs/user-guide/features/api-server
 - Web ダッシュボード（REST/認証）: https://hermes-agent.nousresearch.com/docs/user-guide/features/web-dashboard
+- A2A: https://hermes-agent.nousresearch.com/docs/user-guide/messaging/a2a
+- Kanban: https://hermes-agent.nousresearch.com/docs/user-guide/features/kanban
+- Delegation: https://hermes-agent.nousresearch.com/docs/user-guide/features/delegation
 - セキュリティ: https://hermes-agent.nousresearch.com/docs/user-guide/security
 - CLI リファレンス: https://hermes-agent.nousresearch.com/docs/reference/cli-commands
 - Desktop ソース: https://github.com/NousResearch/hermes-agent/tree/main/apps/desktop
 - マルチゲートウェイ タブ表示の要望（open, P3）: https://github.com/NousResearch/hermes-agent/issues/45779
-- リリース報道: https://the-decoder.com/nous-research-releases-hermes-desktop-an-open-source-ai-agent-for-every-platform/ 、https://www.marktechpost.com/2026/06/03/nous-research-releases-hermes-desktop-a-native-cross-platform-front-end-for-hermes-agent-v0-15-2-with-streaming-tool-output/
