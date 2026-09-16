@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, getServerUrl, setServerUrl, setToken, isNativeApp } from "../api";
+import { api, getServerUrl, setServerUrl, setToken, isNativeApp, normalizeServerUrl } from "../api";
 import { ErrorBox } from "../components/ui";
 
 export function Settings({ firstRun }: { firstRun?: boolean }) {
@@ -8,11 +8,34 @@ export function Settings({ firstRun }: { firstRun?: boolean }) {
   const [next, setNext] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [urlErr, setUrlErr] = useState<string | null>(null);
+  const [testing, setTesting] = useState(false);
 
-  const saveUrl = (e: React.FormEvent) => {
+  // Probe the console before saving so a wrong URL (missing http://, wrong port, not on Tailscale)
+  // is reported here instead of leaving the app stuck on a login screen that talks to nothing.
+  const saveUrl = async (e: React.FormEvent) => {
     e.preventDefault();
-    setServerUrl(url);
-    location.reload();
+    setUrlErr(null);
+    const target = normalizeServerUrl(url);
+    if (!target) return setUrlErr("URL を入力してください");
+    setTesting(true);
+    try {
+      const res = await fetch(`${target}/api/health`, { headers: { accept: "application/json" } });
+      const text = await res.text();
+      let ok = false;
+      try {
+        ok = res.ok && JSON.parse(text)?.status === "ok";
+      } catch {
+        ok = false;
+      }
+      if (!ok) return setUrlErr(`${target} は Fleet Console ではないようです（HTTP ${res.status}）。ポート 8080 と http:// を確認してください。`);
+      setServerUrl(target);
+      location.reload();
+    } catch (e) {
+      setUrlErr(`${target} に接続できません: ${e instanceof Error ? e.message : String(e)}。Tailscale に接続しているか、Mac mini でコンソールが起動しているか確認してください。`);
+    } finally {
+      setTesting(false);
+    }
   };
   const changePw = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,8 +65,9 @@ export function Settings({ firstRun }: { firstRun?: boolean }) {
           <form className="card stack" onSubmit={saveUrl}>
             <strong>コンソールサーバーの URL</strong>
             <p className="muted small">Mac mini 上の Fleet Console の URL（例: <code>http://macmini.tailnet-name.ts.net:8080</code>）。Tailscale に接続した状態で開いてください。</p>
-            <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="http://macmini:8080" />
-            <div className="row"><button className="primary">保存して接続</button></div>
+            <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="http://100.x.y.z:8080" inputMode="url" autoCapitalize="none" autoCorrect="off" />
+            <ErrorBox error={urlErr} />
+            <div className="row"><button className="primary" disabled={testing}>{testing ? "接続を確認中…" : "接続を確認して保存"}</button></div>
           </form>
         )}
         {!firstRun ? (
