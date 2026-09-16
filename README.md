@@ -60,10 +60,21 @@ bash scripts/enroll/macos.sh --password '<ダッシュボード用パスワー�
 
 > Hermes Desktop が自動起動する `127.0.0.1:9119` の serve とは別に、Tailscale アドレスにバインドした serve を常駐させます。ポートが衝突する場合は `--port 9120` などに変更してください。
 
+## ホストされたデモ（Vercel）
+
+コンソールとモック 6 台を 1 つのサーバーレス関数に同居させたデモ構成を同梱しています（`vercel.json` と `scripts/build-vercel-demo.mjs`、Build Output API v3）。
+
+1. https://vercel.com/new/import?s=https://github.com/halz/test でリポジトリを Import（設定は `vercel.json` から自動）
+2. デプロイ後の URL を開き、パスワード `demo` でログイン（環境変数 `FLEET_DEMO_PASSWORD` で変更可）
+
+デモではデータはインスタンス内メモリのみで、コールドスタートで初期化されます。実マシンの登録には使わないでください。
+
 ## Android アプリ
 
 - **PWA**: コンソールを Chrome で開き「ホーム画面に追加」。
-- **APK**: GitHub Actions の `Android APK` ワークフロー（`apps/web/**` の変更時と手動実行）が debug APK を Artifact として出力します。
+- **APK（ダウンロード）**: 最新の debug APK は Release **apk-latest** から取得できます: https://github.com/halz/test/releases/tag/apk-latest
+  （`apk-builds` ブランチにも同じファイルがあります）
+- **APK（ビルド）**: GitHub Actions の `Android APK` ワークフロー（`apps/web/**` の変更時と手動実行）が Artifact / Release / `apk-builds` ブランチに出力します。
   端末にインストールして初回起動時にコンソールの URL（例 `http://100.x.y.z:8080`）を入力してください。
   ローカルでビルドする場合は Android Studio / SDK を入れて `cd apps/web && npx cap sync android && cd android && ./gradlew assembleDebug`。
 
