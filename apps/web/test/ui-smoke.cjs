@@ -8,7 +8,7 @@ const B = process.env.FLEET_URL ?? "http://127.0.0.1:18080";
   page.on("pageerror", (e) => console.log("PAGEERROR", e.message));
   page.on("console", (m) => m.type() === "error" && console.log("CONSOLE", m.text()));
   await page.goto(B + "/");
-  await page.waitForSelector("text=初回セットアップ, text=デモ環境です", { timeout: 10000 });
+  await page.waitForSelector("input[type=password]", { timeout: 10000 });
   if (await page.$("text=デモ環境です")) {
     // Hosted demo: fixed password, already configured.
     await page.fill("input[type=password] >> nth=0", "demo");
