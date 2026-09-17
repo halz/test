@@ -78,6 +78,11 @@ bash scripts/enroll/macos.sh --password '<ダッシュボード用パスワー�
   （`apk-builds` ブランチにも同じファイルがあります）
 - **APK（ビルド）**: GitHub Actions の `Android APK` ワークフロー（`apps/web/**` の変更時と手動実行）が Artifact / Release / `apk-builds` ブランチに出力します。
   端末にインストールして初回起動時にコンソールの URL（例 `http://100.x.y.z:8080`）を入力してください。
+- **APK の上書き更新（署名キー）**: Android は署名が変わった APK を上書きインストールできません。CI が毎回別の debug キーで署名しないよう、リポジトリの Secrets に固定キーを登録してください（一度だけ）。
+  1. キーを作る: `keytool -genkeypair -keystore fleet.jks -storetype PKCS12 -alias fleet -keyalg RSA -keysize 2048 -validity 36500 -storepass <パスワード> -keypass <パスワード> -dname "CN=Hermes Fleet"`
+  2. GitHub の Settings → Secrets and variables → Actions に `FLEET_KEYSTORE_B64`（`base64 -w0 fleet.jks` の出力）と `FLEET_KEYSTORE_PASSWORD` を追加
+  3. 以後のビルドは同じキーで署名され、`versionCode` はワークフローの実行番号なので新しい APK をそのまま上書きできます。
+  キーを変えた直後の 1 回だけは、端末の旧アプリをアンインストールしてから入れ直してください。Secrets が無い場合は警告を出して従来どおり使い捨てキーで署名します。
   ローカルでビルドする場合は Android Studio / SDK を入れて `cd apps/web && npx cap sync android && cd android && ./gradlew assembleDebug`。
 
 ## 構成
