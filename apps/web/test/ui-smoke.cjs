@@ -63,6 +63,14 @@ const B = process.env.FLEET_URL ?? "http://127.0.0.1:18080";
   await page.screenshot({ path: `${S}/shot-models.png`, fullPage: true });
   await page.click("button:has-text('プロファイル')");
   await page.waitForSelector("text=coder", { timeout: 10000 });
+  // give the coder profile an API key (generated + pushed to its .env) so prompts can target it
+  if (await page.$("tr:has-text('coder') >> button:has-text('キーを配布')")) {
+    page.once("dialog", (d) => d.accept());
+    await page.click("tr:has-text('coder') >> button:has-text('キーを配布')");
+    await page.waitForSelector("tr:has-text('coder') >> text=設定済み", { timeout: 10000 });
+  }
+  await page.click("tr:has-text('coder') >> button:has-text('テスト')");
+  await page.waitForSelector("text=接続 OK", { timeout: 10000 });
   await page.click("button:has-text('＋ プロファイル作成')");
   await page.fill("input[placeholder='coder']", "writer");
   await page.click(".modal button.primary:has-text('作成')");
@@ -78,6 +86,9 @@ const B = process.env.FLEET_URL ?? "http://127.0.0.1:18080";
   await page.click(".picker label:has-text('mac-1')");
   await page.click(".picker label:has-text('mac-2')");
   await page.click(".picker label:has-text('win-1')");
+  await page.waitForSelector(".target-row:has-text('mac-2') select", { timeout: 10000 });
+  await page.waitForFunction(() => [...document.querySelectorAll(".target-row")].some((r) => r.textContent.includes("mac-2") && [...r.querySelectorAll("option")].some((o) => o.value === "coder")), null, { timeout: 15000 });
+  await page.selectOption(".target-row:has-text('mac-2') select", "coder");
   await page.fill("textarea", "ホスト名を教えて。please approve");
   await page.click("button:has-text('3 台に送信')");
   await page.waitForSelector("text=承認が必要です", { timeout: 15000 });
@@ -89,6 +100,8 @@ const B = process.env.FLEET_URL ?? "http://127.0.0.1:18080";
   await page.screenshot({ path: `${S}/shot-prompt-done.png`, fullPage: true });
   const outs = await page.$$eval(".run-out", (els) => els.map((e) => e.textContent.slice(0, 60)));
   console.log("run outputs:", outs.join(" || "));
+  if (!outs.some((o) => o.includes("mac-2 / coder"))) throw new Error("mac-2 run did not go to the coder profile");
+  await page.waitForSelector(".runs strong:has-text('mac-2') >> text=/ coder");
   const statuses = await page.$$eval(".runs .badge", (els) => els.map((e) => e.textContent));
   console.log("run statuses:", statuses.join(","));
 

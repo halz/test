@@ -34,6 +34,8 @@ export interface Snapshot {
   };
   api?: { ok: boolean; error?: string; version?: string; status?: string; activeRuns?: number };
   model?: { provider: string; model: string; checkedAt: number };
+  /** Hermes profiles on the machine; hasKey = the console can send prompts to it. */
+  profiles?: { name: string; hasKey: boolean }[];
   update?: { update_available: boolean; behind: number | null; current_version: string; can_apply: boolean; install_method: string; message?: string | null; checkedAt: number; commits?: { sha: string; summary: string }[] };
   alerts: { level: "warn" | "error"; code: string; message: string }[];
 }
@@ -55,6 +57,7 @@ export interface FleetRun {
   batchId: string;
   machineId: string;
   machineName: string;
+  profile: string | null;
   remoteRunId: string | null;
   prompt: string;
   status: string;

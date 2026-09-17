@@ -110,6 +110,28 @@ await j("POST", `/api/runs/${slow.runs[0].id}/stop`);
 await new Promise((r) => setTimeout(r, 800));
 assert((await j("GET", `/api/runs/batches/${slow.batchId}`)).runs[0].status === "cancelled", "stop -> cancelled");
 
+// per-profile prompts: mac-2 has a "coder" profile without an API key yet
+const waitBatch = async (id, ms = 15000) => { const t = Date.now() + ms; for (;;) { const rs = (await j("GET", `/api/runs/batches/${id}`)).runs; if (rs.every((r) => ["completed", "failed", "cancelled"].includes(r.status)) || Date.now() > t) return rs; await new Promise((r) => setTimeout(r, 300)); } };
+const noKey = await waitBatch((await j("POST", "/api/runs", { targets: [{ machineId: fleet[1].id, profile: "coder" }], prompt: "hi" })).batchId);
+assert(noKey[0].status === "failed" && /未設定/.test(noKey[0].error) && noKey[0].profile === "coder", "profile run without key fails clearly");
+const pushed = await j("PUT", `/api/machines/${fleet[1].id}/profiles/coder/key`, { push: true });
+assert(pushed.key.hasKey && pushed.key.profile === "coder", "key generated and pushed to the profile .env");
+assert((await j("GET", `/api/machines/${fleet[1].id}/profiles/keys`)).keys.some((k) => k.profile === "coder" && k.hasKey), "profile key listed");
+const ptest = await j("POST", `/api/machines/${fleet[1].id}/profiles/coder/test`);
+assert(ptest.ok && /\/p\/coder$/.test(ptest.baseUrl), "profile API reachable via /p/coder: " + JSON.stringify(ptest));
+await j("POST", `/api/machines/${fleet[1].id}/refresh`);
+const snapProfiles = (await j("GET", `/api/machines/${fleet[1].id}`)).snapshot.profiles;
+assert(snapProfiles.some((p) => p.name === "coder" && p.hasKey), "snapshot lists coder with key");
+const prof = await waitBatch((await j("POST", "/api/runs", { targets: [{ machineId: fleet[1].id, profile: "coder" }, { machineId: fleet[0].id }], prompt: "プロファイル経由のテスト" })).batchId);
+const coderRun = prof.find((r) => r.profile === "coder");
+assert(coderRun.status === "completed" && coderRun.output.includes("mac-2 / coder"), "run executed on the coder profile: " + coderRun.output.slice(0, 40));
+assert(prof.find((r) => r.profile === null).status === "completed", "default-profile run in the same batch completed");
+const badKey = await j("PUT", `/api/machines/${fleet[1].id}/profiles/coder/key`, { apiKey: "wrong-key-0123456789" });
+assert(badKey.key.hasKey, "manual key stored");
+assert((await j("POST", `/api/machines/${fleet[1].id}/profiles/coder/test`)).ok === false, "wrong key is rejected by the profile endpoint");
+await j("DELETE", `/api/machines/${fleet[1].id}/profiles/coder/key`);
+assert(!(await j("GET", `/api/machines/${fleet[1].id}/profiles/keys`)).keys.some((k) => k.profile === "coder"), "profile key deleted");
+
 // config / env distribution with preview
 const pv = await j("POST", "/api/distribute/preview", { machineIds: [fleet[0].id, fleet[1].id], config: [{ path: "approvals.unattended_mode", raw: "allow" }, { path: "model.default", raw: "anthropic/claude-sonnet-5" }], env: [{ key: "OPENROUTER_API_KEY", value: "sk-or-test" }] });
 assert(pv.rows.length === 2 && pv.rows[0].config[0].current === "deny" && pv.rows[0].config[0].changed && !pv.rows[0].config[1].changed, "preview shows current vs next");

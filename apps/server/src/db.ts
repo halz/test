@@ -79,5 +79,16 @@ function migrate(db: DatabaseSyncT): void {
       expires_at INTEGER NOT NULL,
       label TEXT NOT NULL DEFAULT ''
     );
+    CREATE TABLE IF NOT EXISTS machine_profiles (
+      machine_id TEXT NOT NULL,
+      profile TEXT NOT NULL,
+      api_url TEXT NOT NULL DEFAULT '',
+      api_key_enc TEXT NOT NULL DEFAULT '',
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (machine_id, profile)
+    );
   `);
+  // Added after the first release: runs remember which profile they targeted.
+  const runCols = (db.prepare("PRAGMA table_info(runs)").all() as { name: string }[]).map((c) => c.name);
+  if (!runCols.includes("profile")) db.exec("ALTER TABLE runs ADD COLUMN profile TEXT");
 }

@@ -1,5 +1,5 @@
 import { createHmac, randomBytes } from "node:crypto";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { serve, type ServerType } from "@hono/node-server";
 import { streamSSE } from "hono/streaming";
 import { getCookie, setCookie } from "hono/cookie";
@@ -31,6 +31,8 @@ interface ActionState {
 
 interface RunState {
   run_id: string;
+  /** Named profile the run was addressed to via /p/<profile>/ (undefined = default). */
+  profile?: string;
   status: string;
   created_at: number;
   updated_at: number;
@@ -357,7 +359,7 @@ export function createMockMachine(o: MockMachineOptions): MockMachineApps {
     cronJobs.splice(i, 1);
     return c.json({ ok: true });
   });
-  let config: Record<string, unknown> = { model: { default: "anthropic/claude-sonnet-5" }, approvals: { unattended_mode: "deny" }, gateway: { api_server: { enabled: true, port: opts.apiPort } } };
+  let config: Record<string, unknown> = { model: { default: "anthropic/claude-sonnet-5" }, approvals: { unattended_mode: "deny" }, gateway: { api_server: { enabled: true, port: opts.apiPort }, multiplex_profiles: true } };
   const deepMerge = (a: Record<string, unknown>, b: Record<string, unknown>): Record<string, unknown> => {
     const out: Record<string, unknown> = { ...a };
     for (const [k, v] of Object.entries(b)) {
@@ -367,7 +369,9 @@ export function createMockMachine(o: MockMachineOptions): MockMachineApps {
     return out;
   };
   const envVars: Record<string, string> = { API_SERVER_KEY: opts.apiKey, ANTHROPIC_API_KEY: "sk-ant-demo" };
-  const envRows = () => ({ vars: ["API_SERVER_KEY", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "TELEGRAM_BOT_TOKEN", ...Object.keys(envVars)].filter((k, i, a) => a.indexOf(k) === i).map((name) => ({ name, set: name in envVars, value: name in envVars ? `${envVars[name].slice(0, 3)}***` : null, category: "LLM" })) });
+  const envRows = (env: Record<string, string> = envVars) => ({ vars: ["API_SERVER_KEY", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "TELEGRAM_BOT_TOKEN", ...Object.keys(env)].filter((k, i, a) => a.indexOf(k) === i).map((name) => ({ name, set: name in env, value: name in env ? `${env[name].slice(0, 3)}***` : null, category: "LLM" })) });
+  /** Named profiles' .env files (the default profile's is `envVars`). */
+  const profileEnv: Record<string, Record<string, string>> = {};
   dash.get("/api/config", (c) => c.json(config));
   dash.put("/api/config", async (c) => {
     const body = await c.req.json();
@@ -375,17 +379,28 @@ export function createMockMachine(o: MockMachineOptions): MockMachineApps {
     config = deepMerge(config, body.config);
     return c.json({ ok: true, config });
   });
-  dash.get("/api/env", (c) => c.json(envRows()));
+  // `?profile=<name>` addresses a named profile's own .env (used for its API_SERVER_KEY).
+  const envFor = (c: { req: { query: (n: string) => string | undefined } }): Record<string, string> | null => {
+    const q = c.req.query("profile");
+    if (!q || q === "default") return envVars;
+    if (!profiles.some((p) => p.name === q)) return null;
+    return (profileEnv[q] ??= {});
+  };
+  dash.get("/api/env", (c) => { const env = envFor(c); return env ? c.json(envRows(env)) : c.json({ detail: "profile not found" }, 404); });
   dash.put("/api/env", async (c) => {
+    const env = envFor(c);
+    if (!env) return c.json({ detail: "profile not found" }, 404);
     const body = await c.req.json();
     if (!body?.key) return c.json({ detail: "key required" }, 422);
-    envVars[String(body.key)] = String(body.value ?? "");
+    env[String(body.key)] = String(body.value ?? "");
     return c.json({ ok: true, key: body.key });
   });
   dash.delete("/api/env", async (c) => {
+    const env = envFor(c);
+    if (!env) return c.json({ detail: "profile not found" }, 404);
     const body = await c.req.json().catch(() => ({}));
-    if (!(body.key in envVars)) return c.json({ detail: `${body.key} not found in .env` }, 404);
-    delete envVars[body.key];
+    if (!(body.key in env)) return c.json({ detail: `${body.key} not found in .env` }, 404);
+    delete env[body.key];
     return c.json({ ok: true, found: true });
   });
 
@@ -463,16 +478,26 @@ export function createMockMachine(o: MockMachineOptions): MockMachineApps {
 
   // ---------------- api server (8642) ----------------
   const api = new Hono();
-  const bearerOk = (c: { req: { header: (n: string) => string | undefined } }) => c.req.header("authorization") === `Bearer ${opts.apiKey}`;
-  api.get("/health", (c) => c.json({ status: "ok" }));
-  api.get("/v1/health", (c) => c.json({ status: "ok" }));
+  // Like Hermes under gateway.multiplex_profiles: every route is mirrored at /p/<profile>/... and a named
+  // profile authenticates with ITS OWN API_SERVER_KEY (from that profile's .env), failing closed when unset.
+  const reg = (method: "get" | "post", path: string, handler: (c: Context) => Response | Promise<Response>) => {
+    api[method](path, handler);
+    api[method](`/p/:profile${path}`, handler);
+  };
   api.use("*", async (c, next) => {
     const path = new URL(c.req.url).pathname;
-    if (path === "/health" || path === "/v1/health") return next();
-    if (!bearerOk(c)) return c.json({ error: { message: "Unauthorized", type: "authentication_error" } }, 401);
+    const m = /^\/p\/([^/]+)(\/.*)?$/.exec(path);
+    const profile = m ? decodeURIComponent(m[1]) : null;
+    const rest = m ? m[2] ?? "/" : path;
+    if (profile && !profiles.some((p) => p.name === profile)) return c.json({ error: "Unknown or unconfigured profile" }, 404);
+    if (rest === "/health" || rest === "/v1/health") return next();
+    const expected = !profile || profile === "default" ? opts.apiKey : profileEnv[profile]?.API_SERVER_KEY ?? "";
+    if (!expected || c.req.header("authorization") !== `Bearer ${expected}`) return c.json({ error: { message: "Invalid gateway API key (API_SERVER_KEY)", type: "gateway_auth_error", code: "gateway_auth_failed" } }, 401);
     return next();
   });
-  api.get("/health/detailed", (c) =>
+  reg("get", "/health", (c) => c.json({ status: "ok" }));
+  reg("get", "/v1/health", (c) => c.json({ status: "ok" }));
+  reg("get", "/health/detailed", (c) =>
     c.json({
       status: machine.gatewayRunning ? "ok" : "degraded",
       readiness: { status: machine.gatewayRunning ? "ready" : "not_ready", configured_model: "anthropic/claude-sonnet-5", active_api_runs: [...machine.runs.values()].filter((r) => r.status === "running").length, disk_free_gb: 210 },
@@ -488,7 +513,7 @@ export function createMockMachine(o: MockMachineOptions): MockMachineApps {
       pid: 1234,
     }),
   );
-  api.get("/v1/capabilities", (c) =>
+  reg("get", "/v1/capabilities", (c) =>
     c.json({
       platform: "hermes-agent",
       version: machine.version,
@@ -496,7 +521,7 @@ export function createMockMachine(o: MockMachineOptions): MockMachineApps {
       endpoints: { health: { method: "GET", path: "/health" }, runs: { method: "POST", path: "/v1/runs" }, run_events: { method: "GET", path: "/v1/runs/{run_id}/events" }, run_stop: { method: "POST", path: "/v1/runs/{run_id}/stop" } },
     }),
   );
-  api.get("/v1/models", (c) => c.json({ object: "list", data: [{ id: "hermes-agent", object: "model", owned_by: "hermes" }, { id: "fast", object: "model", owned_by: "hermes" }] }));
+  reg("get", "/v1/models", (c) => c.json({ object: "list", data: [{ id: "hermes-agent", object: "model", owned_by: "hermes" }, { id: "fast", object: "model", owned_by: "hermes" }] }));
 
   const runStatusJson = (r: RunState) => ({ object: "hermes.run", run_id: r.run_id, status: r.status, created_at: r.created_at, updated_at: r.updated_at, session_id: r.session_id, model: r.model, last_event: r.last_event, ...(r.output !== undefined ? { output: r.output } : {}), ...(r.error ? { error: r.error } : {}), ...(r.pendingApproval ? { approval: { event: "approval.request", request_id: r.pendingApproval.request_id } } : {}) });
 
@@ -531,7 +556,7 @@ export function createMockMachine(o: MockMachineOptions): MockMachineApps {
         emit(r, { event: "approval.request", run_id: r.run_id, timestamp: Date.now() / 1000, request_id, command: "rm -rf ./build", choices: ["once", "session", "always", "deny"] });
       });
     }
-    const answer = wantsFail ? "" : `[${opts.name} / ${opts.os}] 受け取ったプロンプト: "${text.slice(0, 60)}". Hermes ${machine.version} が処理しました。ホスト名は ${opts.name}.local、CPU ${opts.os === "Windows" ? 16 : 10} コア、ディスク空き 210 GB です。`;
+    const answer = wantsFail ? "" : `[${opts.name}${r.profile ? ` / ${r.profile}` : ""} / ${opts.os}] 受け取ったプロンプト: "${text.slice(0, 60)}". Hermes ${machine.version} が処理しました。ホスト名は ${opts.name}.local、CPU ${opts.os === "Windows" ? 16 : 10} コア、ディスク空き 210 GB です。`;
     const chunks = answer.match(/.{1,12}/g) ?? [];
     for (const ch of chunks) steps.push(() => emit(r, { event: "message.delta", run_id: r.run_id, timestamp: Date.now() / 1000, delta: ch }));
     steps.push(() => {
@@ -550,7 +575,7 @@ export function createMockMachine(o: MockMachineOptions): MockMachineApps {
     r.timer = setTimeout(tick, unit);
   };
 
-  api.post("/v1/runs", async (c) => {
+  reg("post", "/v1/runs", async (c) => {
     if (!machine.gatewayRunning) return c.json({ error: { message: "gateway not running", type: "server_error" } }, 503);
     const body = await c.req.json().catch(() => null);
     if (!body || !body.input) return c.json({ error: { message: "Missing 'input' field", type: "invalid_request_error" } }, 400);
@@ -560,18 +585,19 @@ export function createMockMachine(o: MockMachineOptions): MockMachineApps {
       for (const r of machine.runs.values()) if ((r as RunState & { idem?: string }).idem === idem) return c.json({ run_id: r.run_id, status: r.status, replayed: true }, 202);
     }
     const run_id = `run_${randomBytes(16).toString("hex")}`;
-    const r: RunState & { idem?: string } = { run_id, status: "started", created_at: Date.now() / 1000, updated_at: Date.now() / 1000, session_id: body.session_id ?? c.req.header("X-Hermes-Session-Id") ?? run_id, model: body.model ?? "hermes-agent", input, listeners: new Set(), events: [], closed: false, idem };
+    const profile = c.req.param("profile");
+    const r: RunState & { idem?: string } = { run_id, ...(profile && profile !== "default" ? { profile } : {}), status: "started", created_at: Date.now() / 1000, updated_at: Date.now() / 1000, session_id: body.session_id ?? c.req.header("X-Hermes-Session-Id") ?? run_id, model: body.model ?? "hermes-agent", input, listeners: new Set(), events: [], closed: false, idem };
     machine.runs.set(run_id, r);
     drive(r);
     return c.json({ run_id, status: "started", replayed: false }, 202);
   });
-  api.get("/v1/runs/:id", (c) => {
-    const r = machine.runs.get(c.req.param("id"));
+  reg("get", "/v1/runs/:id", (c) => {
+    const r = machine.runs.get(c.req.param("id") ?? "");
     if (!r) return c.json({ error: { message: `Run not found`, code: "run_not_found" } }, 404);
     return c.json(runStatusJson(r));
   });
-  api.get("/v1/runs/:id/events", (c) => {
-    const r = machine.runs.get(c.req.param("id"));
+  reg("get", "/v1/runs/:id/events", (c) => {
+    const r = machine.runs.get(c.req.param("id") ?? "");
     if (!r) return c.json({ error: { message: `Run not found`, code: "run_not_found" } }, 404);
     return streamSSE(c, async (stream) => {
       for (const ev of r.events) await stream.write(`data: ${JSON.stringify(ev)}\n\n`);
@@ -587,14 +613,14 @@ export function createMockMachine(o: MockMachineOptions): MockMachineApps {
       });
     });
   });
-  api.post("/v1/runs/:id/stop", (c) => {
-    const r = machine.runs.get(c.req.param("id"));
+  reg("post", "/v1/runs/:id/stop", (c) => {
+    const r = machine.runs.get(c.req.param("id") ?? "");
     if (!r) return c.json({ error: { message: `Run not found`, code: "run_not_found" } }, 404);
     if (!r.closed) { if (r.timer) clearTimeout(r.timer); finish(r, "cancelled", {}); }
     return c.json({ ok: true, run_id: r.run_id, status: r.status });
   });
-  api.post("/v1/runs/:id/approval", async (c) => {
-    const r = machine.runs.get(c.req.param("id"));
+  reg("post", "/v1/runs/:id/approval", async (c) => {
+    const r = machine.runs.get(c.req.param("id") ?? "");
     if (!r) return c.json({ error: { message: `Run not found`, code: "run_not_found" } }, 404);
     const body = await c.req.json().catch(() => ({}));
     if (!r.pendingApproval) return c.json({ error: { message: "no pending approval" } }, 409);
@@ -604,9 +630,9 @@ export function createMockMachine(o: MockMachineOptions): MockMachineApps {
     else r.status = "running";
     return c.json({ ok: true, choice });
   });
-  api.post("/v1/runs/:id/steer", async (c) => c.json({ ok: true }));
-  api.get("/api/sessions", (c) => c.json({ sessions: sessions.slice(0, 20), total: sessions.length }));
-  api.get("/api/jobs", (c) => c.json({ jobs: cronJobs }));
+  reg("post", "/v1/runs/:id/steer", async (c) => c.json({ ok: true }));
+  reg("get", "/api/sessions", (c) => c.json({ sessions: sessions.slice(0, 20), total: sessions.length }));
+  reg("get", "/api/jobs", (c) => c.json({ jobs: cronJobs }));
 
   machine.close = async () => {
     for (const r of machine.runs.values()) if (r.timer) clearTimeout(r.timer);

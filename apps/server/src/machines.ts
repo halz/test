@@ -51,8 +51,26 @@ interface Row {
   updated_at: number;
 }
 
+/** Per-profile API access on a machine (a named Hermes profile has its own API_SERVER_KEY). */
+export interface ProfileKey {
+  profile: string;
+  /** Explicit API URL (a profile running its own gateway); empty = `<machine apiUrl>/p/<profile>` (multiplexed). */
+  apiUrl: string;
+  hasKey: boolean;
+  updatedAt: number;
+}
+
+interface ProfileRow {
+  machine_id: string;
+  profile: string;
+  api_url: string;
+  api_key_enc: string;
+  updated_at: number;
+}
+
 export class MachineRepo {
   private clientCache = new Map<string, { updatedAt: number; dashboard: DashboardClient | null; api: ApiServerClient | null }>();
+  private profileClientCache = new Map<string, { updatedAt: number; api: ApiServerClient }>();
 
   constructor(
     private readonly db: DatabaseSync,
@@ -129,8 +147,57 @@ export class MachineRepo {
 
   delete(id: string): boolean {
     const r = this.db.prepare("DELETE FROM machines WHERE id = ?").run(id);
+    this.db.prepare("DELETE FROM machine_profiles WHERE machine_id = ?").run(id);
     this.clientCache.delete(id);
+    for (const k of [...this.profileClientCache.keys()]) if (k.startsWith(`${id}/`)) this.profileClientCache.delete(k);
     return r.changes > 0;
+  }
+
+  // ---- per-profile API keys ----
+
+  listProfileKeys(machineId: string): ProfileKey[] {
+    const rows = this.db.prepare("SELECT * FROM machine_profiles WHERE machine_id = ? ORDER BY profile").all(machineId) as unknown as ProfileRow[];
+    return rows.map((r) => ({ profile: r.profile, apiUrl: r.api_url, hasKey: r.api_key_enc !== "", updatedAt: r.updated_at }));
+  }
+
+  /** Upsert; an omitted apiKey keeps the stored one, an omitted apiUrl keeps the stored one. */
+  setProfileKey(machineId: string, profile: string, input: { apiUrl?: string; apiKey?: string }): ProfileKey {
+    const cur = this.db.prepare("SELECT * FROM machine_profiles WHERE machine_id = ? AND profile = ?").get(machineId, profile) as unknown as ProfileRow | undefined;
+    const apiUrl = input.apiUrl !== undefined ? (input.apiUrl ? normalizeUrl(input.apiUrl) : "") : cur?.api_url ?? "";
+    const keyEnc = input.apiKey !== undefined ? (input.apiKey ? encrypt(this.key, input.apiKey) : "") : cur?.api_key_enc ?? "";
+    const now = Date.now();
+    this.db
+      .prepare("INSERT INTO machine_profiles (machine_id, profile, api_url, api_key_enc, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(machine_id, profile) DO UPDATE SET api_url = excluded.api_url, api_key_enc = excluded.api_key_enc, updated_at = excluded.updated_at")
+      .run(machineId, profile, apiUrl, keyEnc, now);
+    this.profileClientCache.delete(`${machineId}/${profile}`);
+    return { profile, apiUrl, hasKey: keyEnc !== "", updatedAt: now };
+  }
+
+  deleteProfileKey(machineId: string, profile: string): boolean {
+    const r = this.db.prepare("DELETE FROM machine_profiles WHERE machine_id = ? AND profile = ?").run(machineId, profile);
+    this.profileClientCache.delete(`${machineId}/${profile}`);
+    return r.changes > 0;
+  }
+
+  /**
+   * API client for a (machine, profile) target. The default profile is the machine's own API
+   * server; a named profile uses its stored key and either its own URL or the multiplexed
+   * `/p/<profile>` prefix on the machine's API URL. Null when nothing usable is configured.
+   */
+  profileApi(machineId: string, profile?: string | null): ApiServerClient | null {
+    const cl = this.clients(machineId);
+    if (!cl) return null;
+    if (!profile || profile === "default") return cl.api;
+    const row = this.db.prepare("SELECT * FROM machine_profiles WHERE machine_id = ? AND profile = ?").get(machineId, profile) as unknown as ProfileRow | undefined;
+    if (!row || row.api_key_enc === "") return null;
+    const baseUrl = row.api_url || (cl.machine.apiUrl ? `${cl.machine.apiUrl.replace(/\/+$/, "")}/p/${encodeURIComponent(profile)}` : "");
+    if (!baseUrl) return null;
+    const cacheKey = `${machineId}/${profile}`;
+    const cached = this.profileClientCache.get(cacheKey);
+    if (cached && cached.updatedAt === row.updated_at && cached.api.baseUrl === baseUrl) return cached.api;
+    const api = new ApiServerClient({ baseUrl, apiKey: decrypt(this.key, row.api_key_enc), timeoutMs: this.timeoutMs, fetch: this.fetchImpl });
+    this.profileClientCache.set(cacheKey, { updatedAt: row.updated_at, api });
+    return api;
   }
 
   /** Build (and cache) clients; secrets are decrypted only here. */

@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
@@ -213,6 +214,52 @@ export function buildApp(d: AppDeps): Hono {
     { prefix: "/api/tools/", methods: ["GET"] },
     { prefix: "/api/mcp/", methods: ["GET", "POST", "PUT", "DELETE"] },
   ];
+  // Per-profile API keys: a named Hermes profile is reached at <apiUrl>/p/<profile> (gateway.multiplex_profiles)
+  // or at its own API URL, always with that profile's API_SERVER_KEY.
+  api.get("/machines/:id/profiles/keys", (c) => {
+    const m = d.repo.get(c.req.param("id"));
+    if (!m) return c.json({ error: "not found" }, 404);
+    return c.json({ keys: d.repo.listProfileKeys(m.id) });
+  });
+  api.put("/machines/:id/profiles/:profile/key", async (c) => {
+    const cl = d.repo.clients(c.req.param("id"));
+    if (!cl) return c.json({ error: "not found" }, 404);
+    const profile = c.req.param("profile");
+    if (!/^[a-z][a-z0-9_-]{0,31}$/.test(profile) || profile === "default") return c.json({ error: "invalid profile name" }, 400);
+    const body = await c.req.json<{ apiKey?: string; apiUrl?: string; push?: boolean }>();
+    let apiKey = body.apiKey;
+    if (body.push) {
+      if (!cl.dashboard) return c.json({ error: "dashboard URL not configured for this machine" }, 400);
+      apiKey = randomBytes(24).toString("base64url");
+      await cl.dashboard.putEnv("API_SERVER_KEY", apiKey, profile);
+    }
+    const key = d.repo.setProfileKey(cl.machine.id, profile, { apiUrl: body.apiUrl, apiKey });
+    d.audit.record("profile.key.set", { machineId: cl.machine.id, machineName: cl.machine.name, detail: { profile, pushed: Boolean(body.push), apiUrl: key.apiUrl } });
+    void d.poller.poll(cl.machine.id);
+    return c.json({ key });
+  });
+  api.delete("/machines/:id/profiles/:profile/key", (c) => {
+    const cl = d.repo.clients(c.req.param("id"));
+    if (!cl) return c.json({ error: "not found" }, 404);
+    const profile = c.req.param("profile");
+    d.repo.deleteProfileKey(cl.machine.id, profile);
+    d.audit.record("profile.key.delete", { machineId: cl.machine.id, machineName: cl.machine.name, detail: { profile } });
+    void d.poller.poll(cl.machine.id);
+    return c.json({ ok: true });
+  });
+  api.post("/machines/:id/profiles/:profile/test", async (c) => {
+    const cl = d.repo.clients(c.req.param("id"));
+    if (!cl) return c.json({ error: "not found" }, 404);
+    const profile = c.req.param("profile");
+    const api = d.repo.profileApi(cl.machine.id, profile);
+    if (!api) return c.json({ ok: false, error: "API キーが未設定です" });
+    try {
+      const h = await api.healthDetailed();
+      return c.json({ ok: true, baseUrl: api.baseUrl, status: h.status, version: h.version });
+    } catch (e) {
+      return c.json({ ok: false, baseUrl: api.baseUrl, error: e instanceof Error ? e.message : String(e) });
+    }
+  });
   api.all("/machines/:id/hermes/*", async (c) => {
     const cl = d.repo.clients(c.req.param("id"));
     if (!cl) return c.json({ error: "machine not found" }, 404);
@@ -308,10 +355,11 @@ export function buildApp(d: AppDeps): Hono {
 
   // prompt runs
   api.post("/runs", async (c) => {
-    const body = await c.req.json<{ machineIds: string[]; prompt: string; model?: string; sessionByMachine?: Record<string, string> }>();
-    if (!Array.isArray(body.machineIds) || body.machineIds.length === 0) return c.json({ error: "machineIds required" }, 400);
+    const body = await c.req.json<{ machineIds?: string[]; targets?: { machineId: string; profile?: string | null }[]; prompt: string; model?: string; sessionByMachine?: Record<string, string> }>();
+    const targets = Array.isArray(body.targets) ? body.targets.filter((t) => t && typeof t.machineId === "string") : (body.machineIds ?? []).map((machineId) => ({ machineId }));
+    if (targets.length === 0) return c.json({ error: "targets required" }, 400);
     if (!body.prompt || !body.prompt.trim()) return c.json({ error: "prompt required" }, 400);
-    const res = d.runs.createBatch(body.machineIds, body.prompt, { model: body.model, sessionByMachine: body.sessionByMachine });
+    const res = d.runs.createBatch(targets, body.prompt, { model: body.model, sessionByMachine: body.sessionByMachine });
     return c.json(res, 202);
   });
   api.get("/runs/batches", (c) => c.json({ batches: d.runs.recentBatches(Number(c.req.query("limit") ?? 30)) }));
