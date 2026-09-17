@@ -47,7 +47,7 @@ export function Logs() {
 
   return (
     <>
-      <div className="topbar"><h1>ログ（複数マシン）</h1><span className="spacer" /><button onClick={load} disabled={busy || !ids.length}>更新</button></div>
+      <div className="page-bar"><h1>ログ（複数マシン）</h1><span className="spacer" /><button onClick={load} disabled={busy || !ids.length}>更新</button></div>
       <div className="stack">
         <div className="card stack">
           <MachinePicker machines={machines.data ?? []} value={ids} onChange={setIds} snapshots={fleet.snapshots} />

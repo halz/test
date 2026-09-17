@@ -33,6 +33,7 @@ export interface Snapshot {
     };
   };
   api?: { ok: boolean; error?: string; version?: string; status?: string; activeRuns?: number };
+  model?: { provider: string; model: string; checkedAt: number };
   update?: { update_available: boolean; behind: number | null; current_version: string; can_apply: boolean; install_method: string; message?: string | null; checkedAt: number; commits?: { sha: string; summary: string }[] };
   alerts: { level: "warn" | "error"; code: string; message: string }[];
 }

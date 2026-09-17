@@ -59,7 +59,7 @@ export function Settings({ firstRun }: { firstRun?: boolean }) {
 
   return (
     <div className={firstRun ? "login" : ""}>
-      <div className="topbar"><h1>{firstRun ? "サーバー設定" : "設定"}</h1></div>
+      <div className="page-bar"><h1>{firstRun ? "サーバー設定" : "設定"}</h1></div>
       <div className="stack">
         {(isNativeApp() || firstRun || getServerUrl()) && (
           <form className="card stack" onSubmit={saveUrl}>

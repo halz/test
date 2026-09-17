@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
+import { Bot, Check, MessageSquare, Plus, Send, Sparkles, Square } from "lucide-react";
 import { api, eventSource, fmtAgo } from "../api";
-import { useFleet, useMachines } from "../hooks";
+import { useFleet, useMachines, useMediaQuery } from "../hooks";
 import { Badge, ErrorBox, MachinePicker } from "../components/ui";
 import type { FleetRun, RunStreamEvent } from "../types";
 
@@ -10,67 +12,103 @@ interface LiveRun extends FleetRun {
   events: string[];
   approval?: { request_id?: string; command?: string; choices?: string[] };
 }
+interface Batch { id: string; label: string; createdAt: number; runs: FleetRun[] }
 
 export function Prompt() {
   const machines = useMachines();
   const fleet = useFleet();
+  const [params, setParams] = useSearchParams();
   const [ids, setIds] = useState<string[]>([]);
   const [prompt, setPrompt] = useState("");
   const [model, setModel] = useState("");
-  const [batchId, setBatchId] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const history = useQuery({ queryKey: ["batches"], queryFn: () => api<{ batches: { id: string; label: string; createdAt: number; runs: FleetRun[] }[] }>("GET", "/api/runs/batches?limit=20"), refetchInterval: 10000 });
+  const batchId = params.get("batch");
+  const setBatchId = (id: string | null) => setParams(id ? { batch: id } : {}, { replace: true });
+  const history = useQuery({ queryKey: ["batches"], queryFn: () => api<{ batches: Batch[] }>("GET", "/api/runs/batches?limit=30"), refetchInterval: 10000 });
+  const current = history.data?.batches.find((b) => b.id === batchId);
+  const targets = (machines.data ?? []).filter((m) => ids.includes(m.id));
+  const canSend = !busy && ids.length > 0 && prompt.trim().length > 0;
 
   const send = async () => {
+    if (!canSend) return;
     setErr(null);
     setBusy(true);
     try {
       const r = await api<{ batchId: string }>("POST", "/api/runs", { machineIds: ids, prompt, ...(model ? { model } : {}) });
       setBatchId(r.batchId);
+      setPrompt("");
+      history.refetch();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
   };
+  const narrow = useMediaQuery("(max-width: 1100px)");
+  const picker = <MachinePicker machines={machines.data ?? []} value={ids} onChange={setIds} snapshots={fleet.snapshots} />;
   return (
-    <>
-      <div className="topbar"><h1>プロンプト送信</h1></div>
-      <div className="stack">
-        <div className="card stack">
-          <div><label>対象マシン</label><MachinePicker machines={machines.data ?? []} value={ids} onChange={setIds} snapshots={fleet.snapshots} /></div>
-          <div><label>プロンプト（各マシンの Hermes に同じ内容を送ります）</label><textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="例: このマシンのホスト名と OS、ディスク空き容量を報告して" onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && ids.length && prompt.trim()) send(); }} /></div>
-          <div className="row">
-            <div style={{ width: 260 }}><label>モデル（任意、空なら各マシンの既定）</label><input value={model} onChange={(e) => setModel(e.target.value)} placeholder="hermes-agent" /></div>
-            <span className="spacer" />
-            <button className="primary" disabled={busy || ids.length === 0 || !prompt.trim()} onClick={send}>{ids.length} 台に送信 (⌘/Ctrl+Enter)</button>
+    <section className="chat">
+      <aside className="history">
+        <header><b>履歴</b><button className="icon small" onClick={() => setBatchId(null)} title="新規"><Plus /></button></header>
+        <p>最近のプロンプト</p>
+        {(history.data?.batches ?? []).length === 0 ? <small className="muted" style={{ padding: "0 7px" }}>まだ送信していません</small> : null}
+        {(history.data?.batches ?? []).map((b) => (
+          <button key={b.id} className={b.id === batchId ? "active" : ""} onClick={() => setBatchId(b.id)}>
+            <MessageSquare />
+            <div><b>{b.label}</b><small>{b.runs.length} 台 · {fmtAgo(b.createdAt)}</small></div>
+          </button>
+        ))}
+      </aside>
+      <main className="chat-main">
+        <header>
+          <div>
+            <b>{current ? current.label : "新しいプロンプト"}</b>
+            <span><i className={`dot ${fleet.connected ? "ok" : "warn"}`} /> {current ? `${current.runs.map((r) => r.machineName).join(" · ")} · ${fmtAgo(current.createdAt)}` : ids.length ? `${ids.length} 台を選択中` : "対象マシンを選択してください"}</span>
+          </div>
+          {batchId ? <button className="small" onClick={() => setBatchId(null)}><Plus /> 新規</button> : null}
+        </header>
+        <div className="messages">
+          {batchId ? <BatchView batchId={batchId} /> : (
+            <div className="stack" style={{ maxWidth: 560, margin: "6vh auto", textAlign: "center", alignItems: "center" }}>
+              <i className="model-logo" style={{ width: 44, height: 44 }}><Bot /></i>
+              <h2 style={{ margin: 0, fontSize: 18 }}>複数マシンの Hermes に同時にプロンプトを送る</h2>
+              <p className="muted small">対象マシンを選び、入力欄から送信します。各マシンの出力はリアルタイムに並んで表示され、承認が必要なコマンドはここから許可できます。</p>
+            </div>
+          )}
+        </div>
+        {narrow ? <div className="card" style={{ margin: "0 10px 10px" }}><label>対象マシン</label>{picker}</div> : null}
+        <form className="composer" onSubmit={(e) => { e.preventDefault(); send(); }}>
+          <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="例: このマシンのホスト名と OS、ディスク空き容量を報告して" onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") send(); }} />
+          <div>
+            <label className="chip" title="モデル（任意、空なら各マシンの既定）"><Sparkles /><input value={model} onChange={(e) => setModel(e.target.value)} placeholder="既定モデル" /></label>
+            <span />
+            <small>⌘/Ctrl + ↵ で送信</small>
+            <button type="submit" className="send" disabled={!canSend}><Send /> {ids.length} 台に送信</button>
           </div>
           <ErrorBox error={err} />
-        </div>
-        {batchId ? <BatchView batchId={batchId} /> : null}
-        <div className="card stack">
-          <strong>履歴</strong>
-          <table>
-            <thead><tr><th>日時</th><th>プロンプト</th><th>結果</th><th></th></tr></thead>
-            <tbody>
-              {(history.data?.batches ?? []).map((b) => (
-                <tr key={b.id}>
-                  <td className="small">{fmtAgo(b.createdAt)}</td>
-                  <td style={{ maxWidth: 420, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.label}</td>
-                  <td className="small">{b.runs.map((r) => `${r.machineName}:${r.status}`).join(", ")}</td>
-                  <td><button className="small" onClick={() => setBatchId(b.id)}>表示</button></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </>
+        </form>
+      </main>
+      {narrow ? null : <aside className="context">
+        <header><b>送信先</b><small className="muted">{ids.length} / {(machines.data ?? []).length}</small></header>
+        <section>
+          <small>対象マシン</small>
+          {picker}
+        </section>
+        <section>
+          <small>選択中 · {targets.length} 台</small>
+          {targets.length === 0 ? <p className="muted small" style={{ margin: "6px 0" }}>まだ選択されていません</p> : null}
+          {targets.map((m) => {
+            const s = fleet.snapshots.find((x) => x.machine.id === m.id);
+            return <p key={m.id} className="small" style={{ margin: "6px 0", display: "flex", gap: 6, alignItems: "center" }}><Check style={{ width: 13, color: "var(--green)" }} />{m.name}<span className="muted" style={{ marginLeft: "auto" }}>{s?.model?.model ?? (s?.online ? "" : "offline")}</span></p>;
+          })}
+        </section>
+      </aside>}
+    </section>
   );
 }
 
-function BatchView({ batchId }: { batchId: string }) {
+export function BatchView({ batchId }: { batchId: string }) {
   const [runs, setRuns] = useState<LiveRun[]>([]);
   const runsRef = useRef(runs);
   runsRef.current = runs;
@@ -110,15 +148,15 @@ function BatchView({ batchId }: { batchId: string }) {
 
   return (
     <div className="stack">
-      {runs[0] ? <div className="card small"><span className="muted">プロンプト: </span>{runs[0].prompt}</div> : null}
+      {runs[0] ? <div className="message"><span className="avatar purple">管</span><p>{runs[0].prompt}</p></div> : <p className="muted small">読み込み中…</p>}
       <div className="runs">
         {runs.map((r) => (
           <div key={r.id} className="card stack">
             <div className="row" style={{ justifyContent: "space-between" }}>
-              <strong>{r.machineName}</strong>
+              <strong className="row" style={{ gap: 6 }}><i className="model-logo"><Bot /></i>{r.machineName}</strong>
               <span className="row">
                 <Badge kind={r.status === "completed" ? "ok" : r.status === "failed" ? "err" : r.status === "waiting_for_approval" ? "warn" : terminal(r.status) ? undefined : "info"}>{r.status}</Badge>
-                {!terminal(r.status) ? <button className="small" onClick={() => stop(r)}>停止</button> : null}
+                {!terminal(r.status) ? <button className="small" onClick={() => stop(r)} title="停止"><Square /> 停止</button> : null}
               </span>
             </div>
             {r.approval ? (

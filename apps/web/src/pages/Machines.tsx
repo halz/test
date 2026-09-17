@@ -25,7 +25,7 @@ export function Machines() {
   };
   return (
     <>
-      <div className="topbar"><h1>マシン</h1><span className="spacer" /><button className="primary" onClick={() => setEditing("new")}>＋ 追加</button></div>
+      <div className="page-bar"><h1>マシン</h1><span className="spacer" /><button className="primary" onClick={() => setEditing("new")}>＋ 追加</button></div>
       <ErrorBox error={machines.error ? (machines.error as Error).message : null} />
       <div className="card" style={{ padding: 0, overflow: "auto" }}>
         <table>
