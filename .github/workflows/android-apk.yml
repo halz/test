@@ -34,8 +34,28 @@ jobs:
       - name: Sync Capacitor
         working-directory: apps/web
         run: npx cap sync android
+      # Stable signing key from repository secrets (Settings → Secrets and variables → Actions):
+      #   FLEET_KEYSTORE_B64      base64 of the .jks keystore (alias "fleet")
+      #   FLEET_KEYSTORE_PASSWORD its store/key password
+      # Without them each run signs with a fresh debug key and Android refuses to update
+      # over a previous install ("アプリがインストールされていません").
+      - name: Restore signing key
+        env:
+          FLEET_KEYSTORE_B64: ${{ secrets.FLEET_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$FLEET_KEYSTORE_B64" ]; then
+            echo "$FLEET_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/fleet.jks"
+            echo "FLEET_KEYSTORE_FILE=$RUNNER_TEMP/fleet.jks" >> "$GITHUB_ENV"
+            echo "signing=fixed key (FLEET_KEYSTORE_B64)"
+          else
+            echo "::warning::FLEET_KEYSTORE_B64 secret is not set; the APK is signed with a throwaway debug key and will not install over a previous build."
+          fi
       - name: Build debug APK
         working-directory: apps/web/android
+        env:
+          FLEET_VERSION_CODE: ${{ github.run_number }}
+          FLEET_VERSION_NAME: 0.1.${{ github.run_number }}
+          FLEET_KEYSTORE_PASSWORD: ${{ secrets.FLEET_KEYSTORE_PASSWORD }}
         run: |
           chmod +x gradlew
           ./gradlew --no-daemon assembleDebug
@@ -66,6 +86,6 @@ jobs:
           git init -q -b apk-builds
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          printf 'sha=%s\nbranch=%s\nbuilt=%s\n' "${{ github.sha }}" "${{ github.ref_name }}" "$(date -u +%FT%TZ)" > BUILD_INFO.txt
+          printf 'sha=%s\nbranch=%s\nbuilt=%s\nversionCode=%s\nsigning=%s\n' "${{ github.sha }}" "${{ github.ref_name }}" "$(date -u +%FT%TZ)" "${{ github.run_number }}" "${FLEET_KEYSTORE_FILE:+fixed}" > BUILD_INFO.txt
           git add -A && git commit -q -m "APK from ${{ github.sha }}"
           git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" apk-builds

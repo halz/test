@@ -39,12 +39,20 @@ bash scripts/macmini/install.sh            # Tailscale IP にバインドして 
 | フリート | ダッシュボード: オンライン台数 / 実行中 / 要対応 / 更新ありの集計、直近のプロンプト・一括操作のアクティビティ、要対応リスト、マシンカード（ゲートウェイ / API 状態、使用中モデル、CPU / メモリ、アラート）。ライブ更新 |
 | マシン詳細 | ホスト情報、ログ（レベル / 検索 / 自動更新）、セッションと履歴、cron の作成・一時停止・実行、config / .env の閲覧、単体の操作 |
 | マシン詳細 › モデル・プロバイダ | メインモデル、補助タスクごとのモデル、プロバイダの API キー（検証つき）、カスタムエンドポイント、フォールバック / provider_routing / API サーバーのモデル別名。プロファイル単位で切り替え可 |
-| マシン詳細 › プロファイル | プロファイルの一覧・作成（複製）・削除・名前変更・アクティブ化・モデル・SOUL.md・説明 |
-| プロンプト | チャット形式の画面。左に履歴、右に送信先（マシン選択と使用中モデル）。選択したマシンに同じプロンプトを同時送信し、進捗と回答を横並びで表示。承認要求への応答、停止 |
+| マシン詳細 › プロファイル | プロファイルの一覧・作成（複製）・削除・名前変更・アクティブ化・モデル・SOUL.md・説明。プロファイルごとの API キー（生成してプロファイルの .env に配布、または手入力）と接続テスト |
+| プロンプト | チャット形式の画面。左に履歴、右に送信先（マシン選択と、マシンごとの送信先プロファイル）。選択したマシン / プロファイルに同じプロンプトを同時送信し、進捗と回答を横並びで表示。承認要求への応答、停止 |
 | 一括操作 | ゲートウェイ起動 / 停止 / 再起動、Hermes アップデート（カナリア方式）、doctor / セキュリティ監査 / バックアップ。進捗をライブ表示 |
 | 設定配布 | config.yaml のキーと .env 変数を複数マシンへ配布。差分プレビュー → 適用 |
 | cron / セッション | 全マシン横断の一覧・検索・操作 |
 | 監査ログ | いつ・どのマシンに・何をしたか |
+
+### プロファイル単位でプロンプトを送る
+
+Hermes の名前付きプロファイル（`hermes -p coder`）にもプロンプトを送れます。仕組みは Hermes の multiplex 機能で、既定プロファイルのゲートウェイが `config.yaml` の `gateway.multiplex_profiles: true` のとき、API サーバーが `http://<host>:8642/p/<profile>/v1/runs` で各プロファイルを提供します。認証は **そのプロファイル自身の** `API_SERVER_KEY`（`~/.hermes/profiles/<profile>/.env`）です。
+
+1. マシン側: 既定プロファイルの `config.yaml` に `gateway.multiplex_profiles: true` を設定してゲートウェイを再起動
+2. コンソール: マシン詳細 › プロファイル で対象プロファイルの「キーを配布」を押す（コンソールがキーを生成し、ダッシュボード経由でプロファイルの .env に書き込んで保存）。既にキーがある場合は「API キー」から手入力。プロファイルが独自のゲートウェイ / ポートで動いている場合は同じ画面で API URL を指定
+3. プロンプト画面の送信先で、マシンごとにプロファイルを選ぶ（「プロファイル一括」で選択中の全マシンにまとめて指定）
 
 ## 各マシンを登録する
 
@@ -78,6 +86,11 @@ bash scripts/enroll/macos.sh --password '<ダッシュボード用パスワー�
   （`apk-builds` ブランチにも同じファイルがあります）
 - **APK（ビルド）**: GitHub Actions の `Android APK` ワークフロー（`apps/web/**` の変更時と手動実行）が Artifact / Release / `apk-builds` ブランチに出力します。
   端末にインストールして初回起動時にコンソールの URL（例 `http://100.x.y.z:8080`）を入力してください。
+- **APK の上書き更新（署名キー）**: Android は署名が変わった APK を上書きインストールできません。CI が毎回別の debug キーで署名しないよう、リポジトリの Secrets に固定キーを登録してください（一度だけ）。
+  1. キーを作る: `keytool -genkeypair -keystore fleet.jks -storetype PKCS12 -alias fleet -keyalg RSA -keysize 2048 -validity 36500 -storepass <パスワード> -keypass <パスワード> -dname "CN=Hermes Fleet"`
+  2. GitHub の Settings → Secrets and variables → Actions に `FLEET_KEYSTORE_B64`（`base64 -w0 fleet.jks` の出力）と `FLEET_KEYSTORE_PASSWORD` を追加
+  3. 以後のビルドは同じキーで署名され、`versionCode` はワークフローの実行番号なので新しい APK をそのまま上書きできます。
+  キーを変えた直後の 1 回だけは、端末の旧アプリをアンインストールしてから入れ直してください。Secrets が無い場合は警告を出して従来どおり使い捨てキーで署名します。
   ローカルでビルドする場合は Android Studio / SDK を入れて `cd apps/web && npx cap sync android && cd android && ./gradlew assembleDebug`。
 
 ## 構成

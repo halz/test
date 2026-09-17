@@ -9,6 +9,8 @@ export interface FleetRun {
   batchId: string;
   machineId: string;
   machineName: string;
+  /** Hermes profile the run was sent to (null = the machine's default profile). */
+  profile: string | null;
   remoteRunId: string | null;
   prompt: string;
   status: string;
@@ -28,6 +30,12 @@ export interface RunStreamEvent {
 
 type Listener = (ev: RunStreamEvent) => void;
 
+export interface RunTarget {
+  machineId: string;
+  /** Named Hermes profile; omitted/"default" = the machine's default profile. */
+  profile?: string | null;
+}
+
 /**
  * Fans a prompt out to N machines via /v1/runs, relays their SSE events to console subscribers,
  * and persists the final output per run so batches can be reviewed later.
@@ -44,45 +52,46 @@ export class RunManager {
     private readonly audit: AuditLog,
   ) {}
 
-  createBatch(machineIds: string[], prompt: string, opts: { model?: string; sessionByMachine?: Record<string, string>; label?: string } = {}): { batchId: string; runs: FleetRun[] } {
+  createBatch(targets: RunTarget[], prompt: string, opts: { model?: string; sessionByMachine?: Record<string, string>; label?: string } = {}): { batchId: string; runs: FleetRun[] } {
     const batchId = randomUUID();
     const now = Date.now();
     this.db.prepare("INSERT INTO batches (id, kind, label, created_at) VALUES (?, 'prompt', ?, ?)").run(batchId, opts.label ?? prompt.slice(0, 80), now);
     const runs: FleetRun[] = [];
-    for (const mid of machineIds) {
-      const c = this.repo.clients(mid);
+    for (const t of targets) {
+      const c = this.repo.clients(t.machineId);
       if (!c) continue;
       const id = randomUUID();
-      const sessionId = opts.sessionByMachine?.[mid] ?? null;
+      const profile = t.profile && t.profile !== "default" ? t.profile : null;
+      const sessionId = opts.sessionByMachine?.[t.machineId] ?? null;
       this.db
-        .prepare("INSERT INTO runs (id, batch_id, machine_id, machine_name, remote_run_id, prompt, status, session_id, created_at, updated_at) VALUES (?, ?, ?, ?, NULL, ?, 'queued', ?, ?, ?)")
-        .run(id, batchId, mid, c.machine.name, prompt, sessionId, now, now);
+        .prepare("INSERT INTO runs (id, batch_id, machine_id, machine_name, profile, remote_run_id, prompt, status, session_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NULL, ?, 'queued', ?, ?, ?)")
+        .run(id, batchId, t.machineId, c.machine.name, profile, prompt, sessionId, now, now);
       const run = this.get(id)!;
       runs.push(run);
       void this.execute(run, opts.model);
     }
-    this.audit.record("prompt.batch", { detail: { batchId, machines: runs.map((r) => r.machineName), prompt: prompt.slice(0, 200) } });
+    this.audit.record("prompt.batch", { detail: { batchId, machines: runs.map((r) => (r.profile ? `${r.machineName}/${r.profile}` : r.machineName)), prompt: prompt.slice(0, 200) } });
     return { batchId, runs };
   }
 
   private async execute(run: FleetRun, model?: string): Promise<void> {
-    const c = this.repo.clients(run.machineId);
-    if (!c?.api) {
-      this.finish(run.id, "failed", { error: "API サーバーが設定されていません" });
+    const api = this.repo.profileApi(run.machineId, run.profile);
+    if (!api) {
+      this.finish(run.id, "failed", { error: run.profile ? `プロファイル ${run.profile} の API キーが未設定です（マシン詳細 › プロファイルで設定）` : "API サーバーが設定されていません" });
       return;
     }
     const abort = new AbortController();
     this.aborts.set(run.id, abort);
     this.live.set(run.id, { output: "" });
     try {
-      const accepted = await c.api.createRun(
+      const accepted = await api.createRun(
         { input: run.prompt, ...(model ? { model } : {}), ...(run.sessionId ? { session_id: run.sessionId } : {}) },
         { idempotencyKey: `fleet-${run.id}`, sessionId: run.sessionId ?? undefined },
       );
       this.db.prepare("UPDATE runs SET remote_run_id = ?, status = ?, updated_at = ? WHERE id = ?").run(accepted.run_id, "running", Date.now(), run.id);
       this.emit(run.batchId, { runId: run.id, machineId: run.machineId, event: { event: "fleet.status", status: "running" } });
       let terminal = false;
-      for await (const ev of c.api.runEvents(accepted.run_id, abort.signal)) {
+      for await (const ev of api.runEvents(accepted.run_id, abort.signal)) {
         const buf = this.live.get(run.id);
         if (ev.event === "message.delta" && typeof ev.delta === "string" && buf) buf.output += ev.delta;
         this.emit(run.batchId, { runId: run.id, machineId: run.machineId, event: ev });
@@ -97,7 +106,7 @@ export class RunManager {
       if (!terminal) {
         // Stream closed without a terminal event: ask the run status once.
         try {
-          const st = await c.api.getRun(accepted.run_id);
+          const st = await api.getRun(accepted.run_id);
           const status = RUN_TERMINAL_STATUSES.has(st.status) ? st.status : abort.signal.aborted ? "cancelled" : "failed";
           this.finish(run.id, status, { output: st.output ?? this.live.get(run.id)?.output ?? "", error: st.error ?? (status === "failed" ? "stream ended without terminal event" : ""), sessionId: st.session_id });
         } catch (e) {
@@ -125,10 +134,10 @@ export class RunManager {
   async stop(runId: string): Promise<boolean> {
     const run = this.get(runId);
     if (!run) return false;
-    const c = this.repo.clients(run.machineId);
-    if (run.remoteRunId && c?.api) {
+    const api = this.repo.profileApi(run.machineId, run.profile);
+    if (run.remoteRunId && api) {
       try {
-        await c.api.stopRun(run.remoteRunId);
+        await api.stopRun(run.remoteRunId);
       } catch {
         // fall through: abort local stream anyway
       }
@@ -141,10 +150,10 @@ export class RunManager {
   async approve(runId: string, choice: "once" | "session" | "always" | "deny", requestId?: string): Promise<unknown> {
     const run = this.get(runId);
     if (!run || !run.remoteRunId) throw new Error("run not found");
-    const c = this.repo.clients(run.machineId);
-    if (!c?.api) throw new Error("api client missing");
+    const api = this.repo.profileApi(run.machineId, run.profile);
+    if (!api) throw new Error("api client missing");
     this.audit.record("run.approve", { machineId: run.machineId, machineName: run.machineName, detail: { runId, choice } });
-    return c.api.approveRun(run.remoteRunId, choice, requestId);
+    return api.approveRun(run.remoteRunId, choice, requestId);
   }
 
   get(id: string): FleetRun | null {
@@ -192,6 +201,7 @@ function toRun(r: Record<string, unknown>): FleetRun {
     batchId: r.batch_id as string,
     machineId: r.machine_id as string,
     machineName: r.machine_name as string,
+    profile: (r.profile as string | null) ?? null,
     remoteRunId: (r.remote_run_id as string | null) ?? null,
     prompt: r.prompt as string,
     status: r.status as string,

@@ -19,6 +19,8 @@ export function Prompt() {
   const fleet = useFleet();
   const [params, setParams] = useSearchParams();
   const [ids, setIds] = useState<string[]>([]);
+  /** machineId -> profile name ("default" or a named profile). */
+  const [profileOf, setProfileOf] = useState<Record<string, string>>({});
   const [prompt, setPrompt] = useState("");
   const [model, setModel] = useState("");
   const [err, setErr] = useState<string | null>(null);
@@ -28,6 +30,12 @@ export function Prompt() {
   const history = useQuery({ queryKey: ["batches"], queryFn: () => api<{ batches: Batch[] }>("GET", "/api/runs/batches?limit=30"), refetchInterval: 10000 });
   const current = history.data?.batches.find((b) => b.id === batchId);
   const targets = (machines.data ?? []).filter((m) => ids.includes(m.id));
+  const snapOf = (id: string) => fleet.snapshots.find((x) => x.machine.id === id);
+  const profilesOf = (id: string) => snapOf(id)?.profiles ?? [{ name: "default", hasKey: true }];
+  const profileFor = (id: string) => profileOf[id] ?? "default";
+  /** Named profiles present on at least one selected machine (for the "apply to all" shortcut). */
+  const namedProfiles = [...new Set(targets.flatMap((m) => profilesOf(m.id).map((p) => p.name)))].filter((n) => n !== "default").sort();
+  const applyProfileToAll = (name: string) => setProfileOf((cur) => { const next = { ...cur }; for (const m of targets) next[m.id] = name === "default" || profilesOf(m.id).some((p) => p.name === name) ? name : "default"; return next; });
   const canSend = !busy && ids.length > 0 && prompt.trim().length > 0;
 
   const send = async () => {
@@ -35,7 +43,7 @@ export function Prompt() {
     setErr(null);
     setBusy(true);
     try {
-      const r = await api<{ batchId: string }>("POST", "/api/runs", { machineIds: ids, prompt, ...(model ? { model } : {}) });
+      const r = await api<{ batchId: string }>("POST", "/api/runs", { targets: ids.map((machineId) => ({ machineId, profile: profileFor(machineId) })), prompt, ...(model ? { model } : {}) });
       setBatchId(r.batchId);
       setPrompt("");
       history.refetch();
@@ -47,6 +55,37 @@ export function Prompt() {
   };
   const narrow = useMediaQuery("(max-width: 1100px)");
   const picker = <MachinePicker machines={machines.data ?? []} value={ids} onChange={setIds} snapshots={fleet.snapshots} />;
+  const targetList = (
+    <>
+      {namedProfiles.length ? (
+        <div className="row small" style={{ margin: "6px 0" }}>
+          <span className="muted">プロファイル一括:</span>
+          <select style={{ width: "auto" }} value="" onChange={(e) => { if (e.target.value) applyProfileToAll(e.target.value); }}>
+            <option value="">選択…</option>
+            <option value="default">default（既定）</option>
+            {namedProfiles.map((n) => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </div>
+      ) : null}
+      {targets.length === 0 ? <p className="muted small" style={{ margin: "6px 0" }}>まだ選択されていません</p> : null}
+      {targets.map((m) => {
+        const s = snapOf(m.id);
+        const profiles = profilesOf(m.id);
+        const cur = profileFor(m.id);
+        const curOk = profiles.find((p) => p.name === cur)?.hasKey ?? cur === "default";
+        return (
+          <div key={m.id} className="target-row">
+            <Check style={{ width: 13, color: curOk ? "var(--green)" : "var(--amber)" }} />
+            <b>{m.name}</b>
+            <select value={cur} onChange={(e) => setProfileOf({ ...profileOf, [m.id]: e.target.value })} title="送信先プロファイル">
+              {profiles.map((p) => <option key={p.name} value={p.name}>{p.name === "default" ? "default（既定）" : p.name}{p.hasKey ? "" : "（キー未設定）"}</option>)}
+            </select>
+            <span className="muted">{!curOk ? "キー未設定" : s?.model?.model ?? (s?.online ? "" : "offline")}</span>
+          </div>
+        );
+      })}
+    </>
+  );
   return (
     <section className="chat">
       <aside className="history">
@@ -64,7 +103,7 @@ export function Prompt() {
         <header>
           <div>
             <b>{current ? current.label : "新しいプロンプト"}</b>
-            <span><i className={`dot ${fleet.connected ? "ok" : "warn"}`} /> {current ? `${current.runs.map((r) => r.machineName).join(" · ")} · ${fmtAgo(current.createdAt)}` : ids.length ? `${ids.length} 台を選択中` : "対象マシンを選択してください"}</span>
+            <span><i className={`dot ${fleet.connected ? "ok" : "warn"}`} /> {current ? `${current.runs.map((r) => (r.profile ? `${r.machineName}/${r.profile}` : r.machineName)).join(" · ")} · ${fmtAgo(current.createdAt)}` : ids.length ? `${ids.length} 台を選択中` : "対象マシンを選択してください"}</span>
           </div>
           {batchId ? <button className="small" onClick={() => setBatchId(null)}><Plus /> 新規</button> : null}
         </header>
@@ -77,7 +116,7 @@ export function Prompt() {
             </div>
           )}
         </div>
-        {narrow ? <div className="card" style={{ margin: "0 10px 10px" }}><label>対象マシン</label>{picker}</div> : null}
+        {narrow ? <div className="card" style={{ margin: "0 10px 10px" }}><label>対象マシン</label>{picker}{targets.length ? <div style={{ marginTop: 8 }}><label>送信先プロファイル</label>{targetList}</div> : null}</div> : null}
         <form className="composer" onSubmit={(e) => { e.preventDefault(); send(); }}>
           <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="例: このマシンのホスト名と OS、ディスク空き容量を報告して" onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") send(); }} />
           <div>
@@ -96,12 +135,8 @@ export function Prompt() {
           {picker}
         </section>
         <section>
-          <small>選択中 · {targets.length} 台</small>
-          {targets.length === 0 ? <p className="muted small" style={{ margin: "6px 0" }}>まだ選択されていません</p> : null}
-          {targets.map((m) => {
-            const s = fleet.snapshots.find((x) => x.machine.id === m.id);
-            return <p key={m.id} className="small" style={{ margin: "6px 0", display: "flex", gap: 6, alignItems: "center" }}><Check style={{ width: 13, color: "var(--green)" }} />{m.name}<span className="muted" style={{ marginLeft: "auto" }}>{s?.model?.model ?? (s?.online ? "" : "offline")}</span></p>;
-          })}
+          <small>選択中 · {targets.length} 台 · プロファイル</small>
+          {targetList}
         </section>
       </aside>}
     </section>
@@ -153,7 +188,7 @@ export function BatchView({ batchId }: { batchId: string }) {
         {runs.map((r) => (
           <div key={r.id} className="card stack">
             <div className="row" style={{ justifyContent: "space-between" }}>
-              <strong className="row" style={{ gap: 6 }}><i className="model-logo"><Bot /></i>{r.machineName}</strong>
+              <strong className="row" style={{ gap: 6 }}><i className="model-logo"><Bot /></i>{r.machineName}{r.profile ? <span className="muted"> / {r.profile}</span> : null}</strong>
               <span className="row">
                 <Badge kind={r.status === "completed" ? "ok" : r.status === "failed" ? "err" : r.status === "waiting_for_approval" ? "warn" : terminal(r.status) ? undefined : "info"}>{r.status}</Badge>
                 {!terminal(r.status) ? <button className="small" onClick={() => stop(r)} title="停止"><Square /> 停止</button> : null}

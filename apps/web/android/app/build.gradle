@@ -1,5 +1,12 @@
 apply plugin: 'com.android.application'
 
+// CI passes the run number so every build is an upgrade of the previous one.
+def fleetVersionCode = (System.getenv("FLEET_VERSION_CODE") ?: "1") as Integer
+def fleetVersionName = System.getenv("FLEET_VERSION_NAME") ?: "1.0"
+def fleetKeystorePath = System.getenv("FLEET_KEYSTORE_FILE")
+def fleetKeystore = (fleetKeystorePath && new File(fleetKeystorePath).exists()) ? new File(fleetKeystorePath) : null
+def fleetKeystorePassword = System.getenv("FLEET_KEYSTORE_PASSWORD") ?: ""
+
 android {
     namespace "ai.hermes.fleetconsole"
     compileSdk rootProject.ext.compileSdkVersion
@@ -7,8 +14,8 @@ android {
         applicationId "ai.hermes.fleetconsole"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode fleetVersionCode
+        versionName fleetVersionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -16,9 +23,26 @@ android {
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    // Stable signing key so APKs from CI can be installed over each other. Android refuses
+    // to update an app whose signature changed, and the default debug key is generated per
+    // machine. The key is not in the repo: CI restores it from a secret (see the workflow)
+    // and passes its location / password via FLEET_KEYSTORE_FILE / FLEET_KEYSTORE_PASSWORD.
+    // Without those variables the default debug key is used.
+    signingConfigs {
+        fleet {
+            storeFile fleetKeystore
+            storePassword fleetKeystorePassword
+            keyAlias "fleet"
+            keyPassword fleetKeystorePassword
+        }
+    }
     buildTypes {
+        debug {
+            if (fleetKeystore != null) signingConfig signingConfigs.fleet
+        }
         release {
             minifyEnabled false
+            if (fleetKeystore != null) signingConfig signingConfigs.fleet
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }

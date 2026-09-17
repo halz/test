@@ -219,6 +219,7 @@ flowchart LR
 | 1 台へのプロンプト | `/v1/runs` で実行、SSE の進捗（tool.started 等）と最終回答を表示。stop で中断、approval 要求に応答できる |
 | 複数台へ同時送信 | 選択 N 台に同じプロンプト（マシン名などの変数展開あり）を投げ、結果を横並び表示。`Idempotency-Key` で再送安全 |
 | セッション継続 | 同じマシンへの続き質問が `X-Hermes-Session-Id` で同一セッションに乗る |
+| プロファイル指定（実装済み） | 送信先を (マシン, プロファイル) で選ぶ。Hermes の `gateway.multiplex_profiles` により API サーバーが `/p/<profile>/v1/runs` を提供し、認証はプロファイル自身の `API_SERVER_KEY`。コンソールはプロファイルごとのキーを保存（生成してダッシュボード経由で `.env` に配布、または手入力）し、独自ゲートウェイのプロファイルには API URL の上書きも可 |
 
 ### Phase 4 — 設定配布
 

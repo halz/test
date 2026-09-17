@@ -12,6 +12,8 @@ export interface MachineSnapshot {
   update?: UpdateCheck & { checkedAt: number };
   /** Main model of the default profile (refreshed with the update check cadence). */
   model?: { provider: string; model: string; checkedAt: number };
+  /** Hermes profiles on the machine and whether the console holds an API key for each (default = the machine key). */
+  profiles?: { name: string; hasKey: boolean }[];
   alerts: { level: "warn" | "error"; code: string; message: string }[];
 }
 
@@ -28,6 +30,7 @@ export class FleetPoller {
   private inFlight = new Set<string>();
   private updateCache = new Map<string, UpdateCheck & { checkedAt: number }>();
   private modelCache = new Map<string, { provider: string; model: string; checkedAt: number }>();
+  private profilesCache = new Map<string, { names: string[]; checkedAt: number }>();
   private fastUntil = 0;
   private lastPollAll = 0;
   private pollAllPromise: Promise<void> | null = null;
@@ -162,6 +165,20 @@ export class FleetPoller {
           }
         }
         snap.model = this.modelCache.get(id);
+        const cachedProfiles = this.profilesCache.get(id);
+        if (opts.forceUpdateCheck || !cachedProfiles || Date.now() - cachedProfiles.checkedAt > this.updateIntervalMs) {
+          try {
+            const r = await c.dashboard.request<{ profiles?: { name: string }[] }>("GET", "/api/profiles");
+            if (Array.isArray(r?.profiles)) this.profilesCache.set(id, { names: r.profiles.map((p) => p.name), checkedAt: Date.now() });
+          } catch {
+            // older Hermes without profiles API: leave unset
+          }
+        }
+        const names = this.profilesCache.get(id)?.names;
+        if (names) {
+          const keyed = new Set(this.repo.listProfileKeys(id).filter((k) => k.hasKey).map((k) => k.profile));
+          snap.profiles = names.map((name) => ({ name, hasKey: name === "default" ? Boolean(c.api) : keyed.has(name) }));
+        }
       }
       snap.alerts = deriveAlerts(snap);
       this.snapshots.set(id, snap);
@@ -175,6 +192,7 @@ export class FleetPoller {
   invalidateUpdate(id: string): void {
     this.updateCache.delete(id);
     this.modelCache.delete(id);
+    this.profilesCache.delete(id);
   }
 }
 
