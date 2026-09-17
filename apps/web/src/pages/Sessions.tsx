@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { api, fmtAgo } from "../api";
 import { useMachines } from "../hooks";
-import { Badge, ErrorBox, useAsync } from "../components/ui";
+import { Badge, ErrorBox, useAsync, Table } from "../components/ui";
 
 export function Sessions() {
   const machines = useMachines();
@@ -40,7 +40,7 @@ export function Sessions() {
       {errors.length ? <div className="alert" style={{ marginBottom: 10 }}>{errors.join(" / ")}</div> : null}
       <ErrorBox error={q.error} />
       <div className="card" style={{ padding: 0, overflow: "auto" }}>
-        <table>
+        <Table>
           <thead><tr><th>マシン</th><th>タイトル</th><th>ソース</th><th>件数</th><th>開始</th><th>状態</th></tr></thead>
           <tbody>
             {rows.map((s) => (
@@ -51,7 +51,7 @@ export function Sessions() {
             ))}
             {!q.loading && rows.length === 0 ? <tr><td colSpan={6} className="muted">該当なし</td></tr> : null}
           </tbody>
-        </table>
+        </Table>
       </div>
       {open ? <div className="card" style={{ marginTop: 12 }}><div className="row" style={{ justifyContent: "space-between" }}><strong>{open.id}</strong><button className="small" onClick={() => setOpen(null)}>閉じる</button></div><pre>{msgs.data ? JSON.stringify(msgs.data, null, 2) : msgs.error ?? "…"}</pre></div> : null}
     </>

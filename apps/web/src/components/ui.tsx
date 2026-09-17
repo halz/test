@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Machine, Snapshot } from "../types";
 
 export function Badge({ kind, children }: { kind?: "ok" | "warn" | "err" | "info"; children: ReactNode }) {
@@ -98,4 +98,20 @@ export function osIcon(os: string): string {
   if (o.includes("win")) return "⊞";
   if (o.includes("linux")) return "🐧";
   return "▣";
+}
+
+/** Table that stacks each row into a labelled block on narrow screens (labels come from the header cells). */
+export function Table({ children, className }: { children: ReactNode; className?: string }) {
+  const ref = useRef<HTMLTableElement>(null);
+  useEffect(() => {
+    const t = ref.current;
+    if (!t) return;
+    const heads = [...t.querySelectorAll(":scope > thead th")].map((h) => h.textContent?.trim() ?? "");
+    t.querySelectorAll(":scope > tbody > tr").forEach((tr) => {
+      [...tr.children].forEach((td, i) => {
+        if (td.tagName === "TD" && !td.hasAttribute("colspan")) td.setAttribute("data-label", heads[i] ?? "");
+      });
+    });
+  });
+  return <table ref={ref} className={`stack ${className ?? ""}`}>{children}</table>;
 }
