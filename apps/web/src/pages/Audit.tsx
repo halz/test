@@ -7,7 +7,7 @@ export function Audit() {
   const q = useQuery({ queryKey: ["audit"], queryFn: () => api<{ entries: AuditEntry[] }>("GET", "/api/audit?limit=300"), refetchInterval: 15000 });
   return (
     <>
-      <div className="topbar"><h1>監査ログ</h1><span className="spacer" /><button onClick={() => q.refetch()}>更新</button></div>
+      <div className="page-bar"><h1>監査ログ</h1><span className="spacer" /><button onClick={() => q.refetch()}>更新</button></div>
       <ErrorBox error={q.error ? (q.error as Error).message : null} />
       <div className="card" style={{ padding: 0, overflow: "auto" }}>
         <table>

@@ -29,7 +29,7 @@ export function Ops() {
   };
   return (
     <>
-      <div className="topbar"><h1>一括操作</h1></div>
+      <div className="page-bar"><h1>一括操作</h1></div>
       <div className="stack">
         <div className="card stack">
           <div className="row">

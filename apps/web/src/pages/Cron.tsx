@@ -47,7 +47,7 @@ export function Cron() {
   };
   return (
     <>
-      <div className="topbar"><h1>cron（全マシン）</h1><span className="spacer" /><button onClick={q.reload}>更新</button><button className="primary" onClick={() => setCreating(true)}>＋ 複数マシンに作成</button></div>
+      <div className="page-bar"><h1>cron（全マシン）</h1><span className="spacer" /><button onClick={q.reload}>更新</button><button className="primary" onClick={() => setCreating(true)}>＋ 複数マシンに作成</button></div>
       {errors.length ? <div className="alert" style={{ marginBottom: 10 }}>{errors.join(" / ")}</div> : null}
       {q.loading ? <p className="muted">読み込み中…</p> : null}
       <CronTable jobs={jobs} onAction={act} showMachine />

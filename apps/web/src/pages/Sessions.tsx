@@ -29,7 +29,7 @@ export function Sessions() {
   const errors = (q.data ?? []).filter((r) => r.error).map((r) => `${r.machine.name}: ${r.error}`);
   return (
     <>
-      <div className="topbar">
+      <div className="page-bar">
         <h1>セッション（全マシン）</h1>
         <form className="row" onSubmit={(e) => { e.preventDefault(); setSubmitted(query.trim()); }}>
           <input style={{ width: 280 }} placeholder="全文検索…（空で最近のセッション）" value={query} onChange={(e) => setQuery(e.target.value)} />

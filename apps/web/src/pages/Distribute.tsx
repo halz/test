@@ -53,7 +53,7 @@ export function Distribute() {
 
   return (
     <>
-      <div className="topbar"><h1>設定配布</h1></div>
+      <div className="page-bar"><h1>設定配布</h1></div>
       <div className="stack">
         <div className="card stack">
           <div><label>対象マシン</label><MachinePicker machines={machines.data ?? []} value={ids} onChange={setIds} snapshots={fleet.snapshots} /></div>

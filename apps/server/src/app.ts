@@ -230,6 +230,7 @@ export function buildApp(d: AppDeps): Hono {
     }
     const result = await cl.dashboard.request<unknown>(method, path, body);
     if (method !== "GET") {
+      if (sub.startsWith("/api/model/") || sub.startsWith("/api/profiles")) d.poller.invalidateUpdate(cl.machine.id);
       const redacted = body && typeof body === "object" ? Object.fromEntries(Object.entries(body as Record<string, unknown>).map(([k, v]) => [k, /key|token|secret|password|api_key/i.test(k) ? "***" : v])) : body;
       d.audit.record(`hermes.${method.toLowerCase()}`, { machineId: cl.machine.id, machineName: cl.machine.name, detail: { path: sub, body: redacted } });
     }

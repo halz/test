@@ -23,16 +23,16 @@ const B = process.env.FLEET_URL ?? "http://127.0.0.1:18080";
     await page.click("button:has-text('ログイン')");
   }
   await page.waitForSelector("text=オンライン", { timeout: 10000 });
-  await page.waitForFunction(() => document.querySelectorAll(".grid .card").length >= 6, null, { timeout: 15000 });
+  await page.waitForFunction(() => document.querySelectorAll(".machine-grid > article").length >= 6, null, { timeout: 15000 });
   await page.waitForTimeout(1500);
   await page.screenshot({ path: `${S}/shot-fleet.png`, fullPage: true });
-  const cards = await page.$$eval(".grid .card", (els) => els.map((e) => e.querySelector("a")?.textContent?.trim()));
+  const cards = await page.$$eval(".machine-grid > article", (els) => els.map((e) => e.querySelector("h2 a")?.textContent?.trim()));
   console.log("fleet cards:", cards.join(", "));
-  const alerts = await page.$$eval(".grid .card .alert", (els) => els.map((e) => e.textContent));
+  const alerts = await page.$$eval(".machine-grid .machine-alerts span", (els) => els.map((e) => e.textContent));
   console.log("alerts:", alerts.join(" | "));
 
   // machine detail
-  await page.click("text=mac-4");
+  await page.click(".machine-grid h2 a:has-text('mac-4')");
   await page.waitForSelector("text=ホスト名");
   await page.click("button:has-text('ログ')");
   await page.waitForFunction(() => (document.querySelector("pre")?.textContent ?? "").includes("simulated log line"), null, { timeout: 10000 });
@@ -42,7 +42,7 @@ const B = process.env.FLEET_URL ?? "http://127.0.0.1:18080";
 
   // models / providers tab (mac-2 has a coder profile)
   await page.click("nav.nav >> text=フリート");
-  await page.click("text=mac-2");
+  await page.click(".machine-grid h2 a:has-text('mac-2')");
   await page.waitForSelector("text=ホスト名");
   await page.click("button:has-text('モデル・プロバイダ')");
   await page.waitForSelector("text=メインモデル", { timeout: 10000 });
@@ -158,7 +158,7 @@ const B = process.env.FLEET_URL ?? "http://127.0.0.1:18080";
   await mobile.goto(B + "/");
   await mobile.evaluate((t) => localStorage.setItem("fleet.token", t), await page.evaluate(() => localStorage.getItem("fleet.token")));
   await mobile.goto(B + "/");
-  await mobile.waitForFunction(() => document.querySelectorAll(".grid .card").length >= 6, null, { timeout: 15000 });
+  await mobile.waitForFunction(() => document.querySelectorAll(".machine-grid > article").length >= 6, null, { timeout: 15000 });
   await mobile.screenshot({ path: `${S}/shot-mobile.png`, fullPage: false });
   console.log("UI SMOKE PASSED");
   await browser.close();

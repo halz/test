@@ -10,6 +10,8 @@ export interface MachineSnapshot {
   dashboard?: { ok: boolean; error?: string; status?: DashboardStatus; stats?: SystemStats; authRequired?: boolean };
   api?: { ok: boolean; error?: string; version?: string; status?: string; activeRuns?: number };
   update?: UpdateCheck & { checkedAt: number };
+  /** Main model of the default profile (refreshed with the update check cadence). */
+  model?: { provider: string; model: string; checkedAt: number };
   alerts: { level: "warn" | "error"; code: string; message: string }[];
 }
 
@@ -25,6 +27,7 @@ export class FleetPoller {
   private timer: NodeJS.Timeout | null = null;
   private inFlight = new Set<string>();
   private updateCache = new Map<string, UpdateCheck & { checkedAt: number }>();
+  private modelCache = new Map<string, { provider: string; model: string; checkedAt: number }>();
   private fastUntil = 0;
   private lastPollAll = 0;
   private pollAllPromise: Promise<void> | null = null;
@@ -149,6 +152,16 @@ export class FleetPoller {
           }
         }
         snap.update = this.updateCache.get(id);
+        const cachedModel = this.modelCache.get(id);
+        if (opts.forceUpdateCheck || !cachedModel || Date.now() - cachedModel.checkedAt > this.updateIntervalMs) {
+          try {
+            const aux = await c.dashboard.request<{ main?: { provider?: string; model?: string } }>("GET", "/api/model/auxiliary");
+            if (aux?.main) this.modelCache.set(id, { provider: aux.main.provider ?? "", model: aux.main.model ?? "", checkedAt: Date.now() });
+          } catch {
+            // older Hermes without the endpoint: leave unset
+          }
+        }
+        snap.model = this.modelCache.get(id);
       }
       snap.alerts = deriveAlerts(snap);
       this.snapshots.set(id, snap);
@@ -161,6 +174,7 @@ export class FleetPoller {
 
   invalidateUpdate(id: string): void {
     this.updateCache.delete(id);
+    this.modelCache.delete(id);
   }
 }
 

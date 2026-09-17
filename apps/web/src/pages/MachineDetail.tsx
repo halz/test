@@ -20,7 +20,7 @@ export function MachineDetail({ fleet }: { fleet: FleetState }) {
   const stats = snap.dashboard?.stats;
   return (
     <>
-      <div className="topbar">
+      <div className="page-bar">
         <h1><StatusDot snap={snap} /> {osIcon(m.os)} {m.name}</h1>
         {snap.version ? <Badge>v{snap.version}</Badge> : null}
         {st ? <Badge kind={st.gateway_running ? "ok" : "warn"}>gateway {st.gateway_state ?? ""}</Badge> : null}

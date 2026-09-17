@@ -38,6 +38,7 @@ export function Login() {
   return (
     <div className="login card">
       <div className="brand"><img src="/icon.svg" alt="" />Hermes Fleet Console</div>
+      <p className="muted small" style={{ margin: "0 0 14px" }}>複数マシンの Hermes Desktop を一元管理するコンソール</p>
       {state.isLoading ? <p className="muted">接続中…</p> : null}
       {state.isError ? (
         <div className="stack">
