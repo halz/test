@@ -18,9 +18,16 @@ export function getServerUrl(): string {
   }
 }
 
+/** Normalize what a person types: trims, adds http:// when the scheme is missing, strips trailing slashes. */
+export function normalizeServerUrl(url: string): string {
+  let u = url.trim().replace(/\/+$/, "");
+  if (u && !/^https?:\/\//i.test(u)) u = `http://${u}`;
+  return u;
+}
+
 export function setServerUrl(url: string): void {
   try {
-    localStorage.setItem(KEY_URL, url.trim().replace(/\/+$/, ""));
+    localStorage.setItem(KEY_URL, normalizeServerUrl(url));
   } catch {
     // ignore
   }
@@ -68,16 +75,28 @@ export async function api<T = unknown>(method: string, path: string, body?: unkn
     throw new ApiError(0, `サーバーに接続できません (${getServerUrl() || "same origin"})`);
   }
   const text = await res.text();
-  let data: unknown = text;
+  let data: unknown = undefined;
+  let isJson = false;
   try {
     data = text ? JSON.parse(text) : undefined;
+    isJson = true;
   } catch {
-    // keep text
+    data = text;
   }
   if (res.status === 401 && token && !path.startsWith("/api/auth/")) setToken(null);
   if (!res.ok) {
-    const msg = (data as { error?: string } | undefined)?.error ?? `${res.status} ${res.statusText}`;
+    const msg = isJson ? ((data as { error?: string } | undefined)?.error ?? `${res.status} ${res.statusText}`) : `${res.status} ${res.statusText}`;
+    // A 404 with the console's generic "not found" on a route this app knows means the console
+    // server predates this app build: tell the person to update the server, not the machine.
+    if (res.status === 404 && (msg === "not found" || !isJson)) {
+      throw new ApiError(404, "コンソールサーバーにこの機能がありません。Mac mini のコンソールを更新してください: git pull && bash scripts/macmini/install.sh");
+    }
     throw new ApiError(res.status, msg);
+  }
+  // A 200 that is not JSON means we hit something other than the console API (e.g. the app's own
+  // index.html when the server URL is wrong). Never treat that as data.
+  if (!isJson && text) {
+    throw new ApiError(0, `サーバー URL が正しくありません（${getServerUrl() || "same origin"} は Fleet Console の API を返しませんでした）`);
   }
   return data as T;
 }

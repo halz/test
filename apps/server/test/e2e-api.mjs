@@ -125,9 +125,44 @@ assert(pv2.rows[0].env[0].changed === true && pv2.rows[0].env[0].next === null, 
 const badDist = await fetch(B + "/api/distribute/apply", { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify({ machineIds: [fleet[0].id], config: [], env: [] }) });
 assert(badDist.status === 400, "empty distribute rejected");
 
+// hermes proxy: models / providers / profiles / routing
+const H = (m, path, body) => j(m, `/api/machines/${fleet[1].id}/hermes${path}`, body);
+const opts = await H("GET", "/api/model/options?include_unconfigured=true");
+assert(opts.providers.some((p) => p.slug === "anthropic" && p.authenticated) && opts.providers.some((p) => p.authenticated === false), "model options list providers with auth state");
+const setMain = await H("POST", "/api/model/set", { scope: "main", provider: "anthropic", model: "anthropic/claude-opus-5" });
+assert(setMain.ok === false && setMain.confirm_required, "expensive model asks for confirmation");
+const setMain2 = await H("POST", "/api/model/set", { scope: "main", provider: "anthropic", model: "anthropic/claude-opus-5", confirm_expensive_model: true });
+assert(setMain2.ok === true, "main model set after confirm");
+assert((await H("GET", "/api/model/auxiliary")).main.model === "anthropic/claude-opus-5", "auxiliary payload reflects main model");
+await H("POST", "/api/model/set", { scope: "auxiliary", task: "vision", provider: "openrouter", model: "google/gemini-3-pro" });
+assert((await H("GET", "/api/model/auxiliary")).tasks.find((t) => t.task === "vision").model === "google/gemini-3-pro", "auxiliary task set");
+const val = await H("POST", "/api/providers/validate", { key: "OPENAI_API_KEY", value: "bad-key" });
+assert(val.ok === false && val.reachable, "provider key validation rejects bad key");
+await H("PUT", "/api/env", { key: "OPENAI_API_KEY", value: "sk-good" });
+assert((await H("GET", "/api/model/options")).providers.find((p) => p.slug === "openai").authenticated, "provider authenticated after key set");
+const ce = await H("POST", "/api/providers/custom-endpoints", { name: "ollama mac", base_url: "http://100.1.2.3:11434/v1", model: "local-model", api_key: "" });
+assert(ce.ok && ce.id === "ollama-mac", "custom endpoint created");
+await H("DELETE", `/api/providers/custom-endpoints/${ce.id}`);
+assert(((await H("GET", "/api/providers/custom-endpoints")).endpoints).length === 0, "custom endpoint deleted");
+const profs = await H("GET", "/api/profiles");
+assert(profs.profiles.some((p) => p.name === "coder"), "mac-2 has coder profile");
+const created = await H("POST", "/api/profiles", { name: "researcher", clone_from: "default", description: "reads docs", provider: "anthropic", model: "anthropic/claude-sonnet-5" });
+assert(created.ok && created.model_set, "profile created with model");
+await H("PUT", "/api/profiles/researcher/soul", { content: "You research things." });
+assert((await H("GET", "/api/profiles/researcher/soul")).content === "You research things.", "profile soul saved");
+await H("POST", "/api/profiles/active", { name: "researcher" });
+assert((await H("GET", "/api/profiles/active")).active === "researcher", "active profile switched");
+await H("DELETE", "/api/profiles/researcher");
+assert(!(await H("GET", "/api/profiles")).profiles.some((p) => p.name === "researcher"), "profile deleted");
+await H("PUT", "/api/config", { config: { fallback_providers: [{ provider: "openrouter", model: "anthropic/claude-sonnet-5" }], provider_routing: { sort: "price", only: [], ignore: [], order: ["anthropic"] }, gateway: { api_server: { model_routes: { fast: { model: "anthropic/claude-haiku-4-5", provider: "anthropic" } } } } } });
+const cfgR = await H("GET", "/api/config");
+assert(cfgR.fallback_providers[0].provider === "openrouter" && cfgR.provider_routing.sort === "price" && cfgR.gateway.api_server.model_routes.fast.model === "anthropic/claude-haiku-4-5" && cfgR.gateway.api_server.port, "routing config merged without clobbering siblings");
+const forbidden = await fetch(B + `/api/machines/${fleet[1].id}/hermes/api/gateway/stop`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: "{}" });
+assert(forbidden.status === 403, "proxy rejects non-allowlisted path");
+
 const audit = await j("GET", "/api/audit?limit=200");
 console.log("  audit entries:", audit.entries.length, [...new Set(audit.entries.map((e) => e.action))].join(","));
-assert(audit.entries.some((e) => e.action === "ops.update.done") && audit.entries.some((e) => e.action === "distribute.apply"), "audit has ops + distribute entries");
+assert(audit.entries.some((e) => e.action === "ops.update.done") && audit.entries.some((e) => e.action === "distribute.apply") && audit.entries.some((e) => e.action === "hermes.post" && e.detail.includes("***")), "audit has ops + distribute + proxy entries (secrets redacted)");
 await j("PUT", `/api/machines/${fleet[6].id}`, { name: "ghost-renamed" });
 await j("DELETE", `/api/machines/${fleet[6].id}`);
 assert((await j("GET", "/api/machines")).machines.length === 6, "delete works");

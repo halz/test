@@ -201,6 +201,41 @@ export function buildApp(d: AppDeps): Hono {
     return c.json(await dashboard!.actionStatus(c.req.param("name"), Number(c.req.query("lines") ?? 200)));
   });
 
+  // Generic, allowlisted pass-through to the machine's dashboard API for the per-machine
+  // configuration surfaces (models/providers/profiles/routing). Mutations are audited.
+  const HERMES_PROXY_ALLOW: { prefix: string; methods: string[] }[] = [
+    { prefix: "/api/model/", methods: ["GET", "POST", "PUT"] },
+    { prefix: "/api/profiles", methods: ["GET", "POST", "PUT", "PATCH", "DELETE"] },
+    { prefix: "/api/providers/", methods: ["GET", "POST", "DELETE"] },
+    { prefix: "/api/env", methods: ["GET", "PUT", "DELETE"] },
+    { prefix: "/api/config", methods: ["GET", "PUT"] },
+    { prefix: "/api/skills", methods: ["GET", "PUT", "POST"] },
+    { prefix: "/api/tools/", methods: ["GET"] },
+    { prefix: "/api/mcp/", methods: ["GET", "POST", "PUT", "DELETE"] },
+  ];
+  api.all("/machines/:id/hermes/*", async (c) => {
+    const cl = d.repo.clients(c.req.param("id"));
+    if (!cl) return c.json({ error: "machine not found" }, 404);
+    if (!cl.dashboard) return c.json({ error: "dashboard URL not configured for this machine" }, 400);
+    const url = new URL(c.req.url);
+    const sub = url.pathname.replace(/^.*\/hermes/, "");
+    const path = sub + url.search;
+    const method = c.req.method.toUpperCase();
+    const rule = HERMES_PROXY_ALLOW.find((r) => sub === r.prefix.replace(/\/$/, "") || sub.startsWith(r.prefix));
+    if (!rule || !rule.methods.includes(method)) return c.json({ error: `not allowed: ${method} ${sub}` }, 403);
+    let body: unknown = undefined;
+    if (method !== "GET" && method !== "HEAD") {
+      const raw = await c.req.text();
+      body = raw ? JSON.parse(raw) : {};
+    }
+    const result = await cl.dashboard.request<unknown>(method, path, body);
+    if (method !== "GET") {
+      const redacted = body && typeof body === "object" ? Object.fromEntries(Object.entries(body as Record<string, unknown>).map(([k, v]) => [k, /key|token|secret|password|api_key/i.test(k) ? "***" : v])) : body;
+      d.audit.record(`hermes.${method.toLowerCase()}`, { machineId: cl.machine.id, machineName: cl.machine.name, detail: { path: sub, body: redacted } });
+    }
+    return c.json(result ?? { ok: true });
+  });
+
   // fleet overview + stream
   api.get("/fleet/overview", async (c) => {
     d.poller.touch();
