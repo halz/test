@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, eventSource, fmtAgo } from "../api";
 import { useFleet, useMachines } from "../hooks";
-import { Badge, ErrorBox, MachinePicker, Modal } from "../components/ui";
+import { Badge, ErrorBox, MachinePicker, Modal, Table } from "../components/ui";
 import { OPS_LABELS, type OpsJob, type OpsKind } from "../types";
 
 export function Ops() {
@@ -43,7 +43,7 @@ export function Ops() {
         {jobId ? <JobView jobId={jobId} /> : null}
         <div className="card stack">
           <strong>履歴</strong>
-          <table>
+          <Table>
             <thead><tr><th>開始</th><th>操作</th><th>結果</th><th>対象</th><th></th></tr></thead>
             <tbody>
               {(history.data?.jobs ?? []).map((j) => (
@@ -55,7 +55,7 @@ export function Ops() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </Table>
         </div>
       </div>
       {confirming ? (

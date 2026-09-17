@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { useMachines } from "../hooks";
-import { Badge, ErrorBox, Modal, osIcon } from "../components/ui";
+import { Badge, ErrorBox, Modal, osIcon, Table } from "../components/ui";
 import type { Machine } from "../types";
 
 interface FormState {
@@ -28,7 +28,7 @@ export function Machines() {
       <div className="page-bar"><h1>マシン</h1><span className="spacer" /><button className="primary" onClick={() => setEditing("new")}>＋ 追加</button></div>
       <ErrorBox error={machines.error ? (machines.error as Error).message : null} />
       <div className="card" style={{ padding: 0, overflow: "auto" }}>
-        <table>
+        <Table>
           <thead><tr><th>名前</th><th>OS</th><th>タグ</th><th>ダッシュボード</th><th>API サーバー</th><th></th></tr></thead>
           <tbody>
             {(machines.data ?? []).map((m) => (
@@ -38,16 +38,16 @@ export function Machines() {
                 <td>{m.tags.map((t) => <Badge key={t}>#{t}</Badge>)}</td>
                 <td className="mono">{m.dashboardUrl || "-"}<div className="muted small">{m.dashboardAuthKind === "basic" ? `basic (${m.dashboardUsername}${m.hasDashboardPassword ? "" : ", パスワード未設定"})` : "認証なし"}</div></td>
                 <td className="mono">{m.apiUrl || "-"}<div className="muted small">{m.hasApiKey ? "キー設定済み" : "キー未設定"}</div></td>
-                <td className="row" style={{ justifyContent: "flex-end" }}>
+                <td><div className="row" style={{ justifyContent: "flex-end" }}>
                   <button className="small" onClick={() => setGuide(m)}>有効化手順</button>
                   <button className="small" onClick={() => setEditing(m)}>編集</button>
                   <button className="small danger" onClick={() => remove(m)}>削除</button>
-                </td>
+                </div></td>
               </tr>
             ))}
             {machines.data && machines.data.length === 0 ? <tr><td colSpan={6} className="muted">まだ登録がありません。「＋ 追加」から登録してください。</td></tr> : null}
           </tbody>
-        </table>
+        </Table>
       </div>
       {editing ? <MachineForm machine={editing === "new" ? null : editing} onClose={() => { setEditing(null); qc.invalidateQueries({ queryKey: ["machines"] }); }} /> : null}
       {guide ? <EnrollGuide machine={guide} onClose={() => setGuide(null)} /> : null}

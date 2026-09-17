@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api } from "../../api";
-import { Badge, ErrorBox, Modal, useAsync } from "../../components/ui";
+import { Badge, ErrorBox, Modal, useAsync, Table } from "../../components/ui";
 
 interface Profile { name: string; path: string; is_default: boolean; model: string | null; provider: string | null; has_env: boolean; skill_count: number; gateway_running: boolean; description: string; display_name: string }
 interface ProviderRow { slug: string; name: string; authenticated?: boolean; models?: string[] }
@@ -33,7 +33,7 @@ export function ProfilesTab({ id }: { id: string }) {
       <div className="row"><button className="primary" onClick={() => setCreating(true)}>＋ プロファイル作成</button><button onClick={reload}>更新</button><span className="muted small">アクティブ: <code>{active.data?.active ?? "-"}</code>（CLI とゲートウェイの既定）</span></div>
       <ErrorBox error={err ?? list.error} />
       <div className="card" style={{ padding: 0, overflow: "auto" }}>
-        <table><thead><tr><th>名前</th><th>モデル</th><th>ゲートウェイ</th><th>スキル</th><th>説明</th><th></th></tr></thead><tbody>
+        <Table><thead><tr><th>名前</th><th>モデル</th><th>ゲートウェイ</th><th>スキル</th><th>説明</th><th></th></tr></thead><tbody>
           {(list.data?.profiles ?? []).map((p) => (
             <tr key={p.name}>
               <td><strong>{p.display_name || p.name}</strong> {p.is_default ? <Badge>default</Badge> : null}{active.data?.active === p.name ? <Badge kind="info">active</Badge> : null}<div className="muted small mono">{p.path}</div></td>
@@ -41,16 +41,16 @@ export function ProfilesTab({ id }: { id: string }) {
               <td>{p.gateway_running ? <Badge kind="ok">running</Badge> : <Badge>stopped</Badge>}</td>
               <td>{p.skill_count}</td>
               <td className="muted small" style={{ maxWidth: 240 }}>{p.description || "-"}</td>
-              <td className="row" style={{ justifyContent: "flex-end" }}>
+              <td><div className="row" style={{ justifyContent: "flex-end" }}>
                 <button className="small" onClick={() => { setModelEdit(p); setMp({ provider: p.provider ?? "", model: p.model ?? "" }); }}>モデル</button>
                 <button className="small" onClick={() => openSoul(p)}>SOUL</button>
                 <button className="small" onClick={() => setDescription(p)}>説明</button>
                 {active.data?.active !== p.name ? <button className="small" onClick={() => setActive(p)}>アクティブに</button> : null}
                 {!p.is_default ? <><button className="small" onClick={() => rename(p)}>名前変更</button><button className="small danger" onClick={() => remove(p)}>削除</button></> : null}
-              </td>
+              </div></td>
             </tr>
           ))}
-        </tbody></table>
+        </tbody></Table>
       </div>
       {creating ? <Modal title="プロファイルを作成" onClose={() => setCreating(false)} footer={<><button onClick={() => setCreating(false)}>キャンセル</button><button className="primary" disabled={!/^[a-z][a-z0-9_-]*$/.test(form.name)} onClick={create}>作成</button></>}>
         <div className="form">

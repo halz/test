@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, fmtAgo, fmtBytes, fmtDuration } from "../api";
 import type { FleetState } from "../hooks";
-import { Badge, ErrorBox, Meter, StatusDot, osIcon, useAsync } from "../components/ui";
+import { Badge, ErrorBox, Meter, StatusDot, osIcon, useAsync, Table } from "../components/ui";
 import { OPS_LABELS, type OpsKind } from "../types";
 import { JobView } from "./Ops";
 import { ModelsTab } from "./machine/ModelsTab";
@@ -113,7 +113,7 @@ function SessionsTab({ id }: { id: string }) {
     <div className="stack">
       <ErrorBox error={q.error} />
       <div className="card" style={{ padding: 0, overflow: "auto" }}>
-        <table>
+        <Table>
           <thead><tr><th>タイトル</th><th>ソース</th><th>件数</th><th>開始</th><th>状態</th></tr></thead>
           <tbody>
             {(q.data?.sessions ?? []).map((s) => (
@@ -123,7 +123,7 @@ function SessionsTab({ id }: { id: string }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </Table>
       </div>
       {open ? <div className="card"><div className="row" style={{ justifyContent: "space-between" }}><strong>{open}</strong><button className="small" onClick={() => setOpen(null)}>閉じる</button></div><pre>{msgs.data ? JSON.stringify(msgs.data, null, 2) : msgs.error ?? "…"}</pre></div> : null}
     </div>
@@ -168,7 +168,7 @@ export function CronTab({ id }: { id: string }) {
 export function CronTable({ jobs, onAction, showMachine }: { jobs: (Record<string, unknown> & { _machineId: string; _machineName?: string })[]; onAction: (jid: string, action: string, machineId: string) => void; showMachine?: boolean }) {
   return (
     <div className="card" style={{ padding: 0, overflow: "auto" }}>
-      <table>
+      <Table>
         <thead><tr>{showMachine ? <th>マシン</th> : null}<th>名前</th><th>スケジュール</th><th>プロンプト</th><th>次回 / 前回</th><th>状態</th><th></th></tr></thead>
         <tbody>
           {jobs.map((j) => (
@@ -178,16 +178,16 @@ export function CronTable({ jobs, onAction, showMachine }: { jobs: (Record<strin
               <td className="muted" style={{ maxWidth: 320, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{String(j.prompt ?? "")}</td>
               <td className="small">{fmtAgo(j.next_run as string)} / {fmtAgo(j.last_run as string)}</td>
               <td>{j.paused || j.enabled === false ? <Badge kind="warn">paused</Badge> : <Badge kind="ok">active</Badge>}</td>
-              <td className="row" style={{ justifyContent: "flex-end" }}>
+              <td><div className="row" style={{ justifyContent: "flex-end" }}>
                 {j.paused || j.enabled === false ? <button className="small" onClick={() => onAction(String(j.id), "resume", j._machineId)}>再開</button> : <button className="small" onClick={() => onAction(String(j.id), "pause", j._machineId)}>一時停止</button>}
                 <button className="small" onClick={() => onAction(String(j.id), "trigger", j._machineId)}>今すぐ実行</button>
                 <button className="small danger" onClick={() => onAction(String(j.id), "delete", j._machineId)}>削除</button>
-              </td>
+              </div></td>
             </tr>
           ))}
           {jobs.length === 0 ? <tr><td colSpan={7} className="muted">ジョブなし</td></tr> : null}
         </tbody>
-      </table>
+      </Table>
     </div>
   );
 }
@@ -196,7 +196,7 @@ function ConfigTab({ id }: { id: string }) {
   const cfg = useAsync(() => api<unknown>("GET", `/api/machines/${id}/config`), [id]);
   const env = useAsync(() => api<unknown>("GET", `/api/machines/${id}/env`), [id]);
   return (
-    <div className="grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
+    <div className="grid grid-2">
       <div className="card"><strong>config.yaml</strong><ErrorBox error={cfg.error} /><pre>{cfg.data ? JSON.stringify(cfg.data, null, 2) : "…"}</pre></div>
       <div className="card"><strong>.env（値はマスク）</strong><ErrorBox error={env.error} /><pre>{env.data ? JSON.stringify(env.data, null, 2) : "…"}</pre></div>
     </div>

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { api } from "../api";
 import { useFleet, useMachines } from "../hooks";
-import { Badge, ErrorBox, MachinePicker } from "../components/ui";
+import { Badge, ErrorBox, MachinePicker, Table } from "../components/ui";
 
 interface ConfigRow { path: string; raw: string }
 interface EnvRow { key: string; value: string; remove: boolean }
@@ -94,7 +94,7 @@ export function Distribute() {
         {preview ? (
           <div className="card stack">
             <strong>差分プレビュー</strong>
-            <table>
+            <Table>
               <thead><tr><th>マシン</th><th>項目</th><th>現在</th><th>適用後</th><th></th></tr></thead>
               <tbody>
                 {preview.flatMap((r) => {
@@ -105,7 +105,7 @@ export function Distribute() {
                   ];
                 })}
               </tbody>
-            </table>
+            </Table>
           </div>
         ) : null}
         {result ? (

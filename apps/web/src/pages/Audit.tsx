@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
-import { Badge, ErrorBox } from "../components/ui";
+import { Badge, ErrorBox, Table } from "../components/ui";
 import type { AuditEntry } from "../types";
 
 export function Audit() {
@@ -10,7 +10,7 @@ export function Audit() {
       <div className="page-bar"><h1>監査ログ</h1><span className="spacer" /><button onClick={() => q.refetch()}>更新</button></div>
       <ErrorBox error={q.error ? (q.error as Error).message : null} />
       <div className="card" style={{ padding: 0, overflow: "auto" }}>
-        <table>
+        <Table>
           <thead><tr><th>日時</th><th>操作</th><th>マシン</th><th>詳細</th><th></th></tr></thead>
           <tbody>
             {(q.data?.entries ?? []).map((e) => (
@@ -23,7 +23,7 @@ export function Audit() {
               </tr>
             ))}
           </tbody>
-        </table>
+        </Table>
       </div>
     </>
   );

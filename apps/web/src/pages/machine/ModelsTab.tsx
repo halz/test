@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../../api";
-import { Badge, ErrorBox, Modal, useAsync } from "../../components/ui";
+import { Badge, ErrorBox, Modal, useAsync, Table } from "../../components/ui";
 
 interface ProviderRow { slug: string; name: string; is_current?: boolean; is_user_defined?: boolean; authenticated?: boolean; auth_type?: string; key_env?: string; warning?: string; models?: string[] }
 interface AuxTask { task: string; provider: string; model: string; base_url?: string; reasoning_effort?: string | null }
@@ -95,9 +95,9 @@ function Auxiliary({ hermes, q, providers, tasks, onChanged }: { hermes: Hermes;
   return (
     <div className="card stack">
       <div className="row"><strong>補助タスクのモデル</strong><span className="muted small">auto はメインモデルを使用</span><span className="spacer" /><button className="small" onClick={reset}>すべて auto に戻す</button></div>
-      <table><thead><tr><th>タスク</th><th>プロバイダ</th><th>モデル</th><th></th></tr></thead><tbody>
+      <Table><thead><tr><th>タスク</th><th>プロバイダ</th><th>モデル</th><th></th></tr></thead><tbody>
         {tasks.map((t) => <tr key={t.task}><td>{AUX_LABELS[t.task] ?? t.task} <span className="muted small">{t.task}</span></td><td>{t.provider}</td><td className="mono">{t.model || "-"}</td><td><button className="small" onClick={() => setEdit({ ...t })}>変更</button></td></tr>)}
-      </tbody></table>
+      </tbody></Table>
       {edit ? <Modal title={`${AUX_LABELS[edit.task] ?? edit.task} のモデル`} onClose={() => setEdit(null)} footer={<><button onClick={() => setEdit(null)}>キャンセル</button><button className="primary" onClick={save}>保存</button></>}>
         <ModelPicker allowAuto providers={providers} provider={edit.provider} model={edit.model} onChange={(p, m) => setEdit({ ...edit, provider: p, model: m })} /><ErrorBox error={err} />
       </Modal> : null}
@@ -119,9 +119,9 @@ function ProviderKeys({ hermes, q, providers, onChanged }: { hermes: Hermes; q: 
   return (
     <div className="card stack">
       <strong>LLM プロバイダの認証</strong>
-      <table><thead><tr><th>プロバイダ</th><th>状態</th><th>キー変数</th><th>モデル数</th><th></th></tr></thead><tbody>
+      <Table><thead><tr><th>プロバイダ</th><th>状態</th><th>キー変数</th><th>モデル数</th><th></th></tr></thead><tbody>
         {providers.filter((p) => !p.is_user_defined).map((p) => <tr key={p.slug}><td>{p.name}{p.is_current ? <Badge kind="info">使用中</Badge> : null}</td><td>{p.authenticated === false ? <Badge kind="warn">未設定</Badge> : <Badge kind="ok">認証済み</Badge>}</td><td className="mono">{p.key_env || (p.auth_type ?? "-")}</td><td>{p.models?.length ?? 0}</td><td>{p.key_env ? <button className="small" onClick={() => { setEdit(p); setValue(""); setErr(null); }}>{p.authenticated === false ? "キーを設定" : "キーを更新"}</button> : <span className="muted small">hermes model で設定</span>}</td></tr>)}
-      </tbody></table>
+      </tbody></Table>
       {edit ? <Modal title={`${edit.name} の API キー`} onClose={() => setEdit(null)} footer={<><button onClick={() => setEdit(null)}>キャンセル</button><button className="primary" disabled={busy || !value} onClick={save}>{busy ? "検証中…" : "検証して保存"}</button></>}>
         <div className="stack"><div><label>{edit.key_env}</label><input type="password" value={value} onChange={(e) => setValue(e.target.value)} autoComplete="new-password" /></div><p className="muted small">保存前にプロバイダへ問い合わせて有効性を確認します。値はこのマシンの .env に書かれ、コンソールには保存しません。</p><ErrorBox error={err} /></div>
       </Modal> : null}
@@ -142,10 +142,10 @@ function CustomEndpoints({ hermes, q, list, onChanged }: { hermes: Hermes; q: st
   return (
     <div className="card stack">
       <div className="row"><strong>カスタムエンドポイント（OpenAI 互換 / ローカル LLM）</strong><span className="spacer" /><button className="small" onClick={() => { setForm({ name: "", base_url: "", api_key: "", model: "", make_default: false }); setProbe(null); setErr(null); }}>＋ 追加</button></div>
-      <table><thead><tr><th>名前</th><th>URL</th><th>モデル</th><th></th></tr></thead><tbody>
+      <Table><thead><tr><th>名前</th><th>URL</th><th>モデル</th><th></th></tr></thead><tbody>
         {list.map((e) => <tr key={e.id}><td>{e.name} <span className="muted small">{e.id}</span></td><td className="mono">{e.base_url}</td><td className="mono">{e.model || (e.models ?? []).join(", ")}</td><td><button className="small danger" onClick={() => remove(e)}>削除</button></td></tr>)}
         {list.length === 0 ? <tr><td colSpan={4} className="muted">なし</td></tr> : null}
-      </tbody></table>
+      </tbody></Table>
       {form ? <Modal title="カスタムエンドポイントを追加" onClose={() => setForm(null)} footer={<><button onClick={validate}>接続確認</button><button className="primary" disabled={!form.name || !form.base_url} onClick={save}>保存</button></>}>
         <div className="form">
           <div><label>名前</label><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="ollama-mac-3" /></div>
