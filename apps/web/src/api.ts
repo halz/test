@@ -86,6 +86,11 @@ export async function api<T = unknown>(method: string, path: string, body?: unkn
   if (res.status === 401 && token && !path.startsWith("/api/auth/")) setToken(null);
   if (!res.ok) {
     const msg = isJson ? ((data as { error?: string } | undefined)?.error ?? `${res.status} ${res.statusText}`) : `${res.status} ${res.statusText}`;
+    // A 404 with the console's generic "not found" on a route this app knows means the console
+    // server predates this app build: tell the person to update the server, not the machine.
+    if (res.status === 404 && (msg === "not found" || !isJson)) {
+      throw new ApiError(404, "コンソールサーバーにこの機能がありません。Mac mini のコンソールを更新してください: git pull && bash scripts/macmini/install.sh");
+    }
     throw new ApiError(res.status, msg);
   }
   // A 200 that is not JSON means we hit something other than the console API (e.g. the app's own
