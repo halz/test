@@ -43,7 +43,8 @@ export function Prompt() {
     setErr(null);
     setBusy(true);
     try {
-      const r = await api<{ batchId: string }>("POST", "/api/runs", { targets: ids.map((machineId) => ({ machineId, profile: profileFor(machineId) })), prompt, ...(model ? { model } : {}) });
+      // machineIds is also sent so a console server from before profile targeting still accepts the request (it ignores targets and uses the default profile).
+      const r = await api<{ batchId: string }>("POST", "/api/runs", { targets: ids.map((machineId) => ({ machineId, profile: profileFor(machineId) })), machineIds: ids, prompt, ...(model ? { model } : {}) });
       setBatchId(r.batchId);
       setPrompt("");
       history.refetch();
