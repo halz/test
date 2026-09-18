@@ -1,0 +1,5 @@
+sha=e350a3edcfdd70e9fea6cbb2a89427561376e81e
+branch=claude/hermes-desktop-management-planning-bjn0dy
+built=2026-09-18T21:45:09Z
+versionCode=25
+signing=fixed
