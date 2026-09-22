@@ -26,7 +26,7 @@
 
     <string name="service_on">有効</string>
     <string name="service_off">無効</string>
-    <string name="service_hint">Android の設定 → ユーザー補助 →「Level ウィジェット」をオンにしてください。</string>
+    <string name="service_hint">Android の設定 → ユーザー補助 →「Level ウィジェット」をオンにしてください。\n\n「アプリはアクセスを拒否されました」と出る場合は Android の「制限付き設定」です。設定 → アプリ →「Level ウィジェット」→ 右上の ⋮ →「制限付き設定を許可」を先に実行してください。</string>
     <string name="open_settings">アクセシビリティ設定を開く</string>
 
     <string name="target_unset">未設定</string>
