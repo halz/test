@@ -1,0 +1,63 @@
+name: Level Widget APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "apps/level-widget/**"
+      - ".github/workflows/level-widget-apk.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+          cache-dependency-path: apps/level-widget/**/*.gradle
+      # Same fixed signing key as the fleet console APK, so both can be updated in place.
+      # Without the secrets each run signs with a throwaway debug key.
+      - name: Restore signing key
+        env:
+          FLEET_KEYSTORE_B64: ${{ secrets.FLEET_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$FLEET_KEYSTORE_B64" ]; then
+            echo "$FLEET_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/fleet.jks"
+            echo "FLEET_KEYSTORE_FILE=$RUNNER_TEMP/fleet.jks" >> "$GITHUB_ENV"
+          else
+            echo "::warning::FLEET_KEYSTORE_B64 secret is not set; the APK is signed with a throwaway debug key and will not install over a previous build."
+          fi
+      - name: Unit tests and debug APK
+        working-directory: apps/level-widget
+        env:
+          LEVEL_WIDGET_VERSION_CODE: ${{ github.run_number }}
+          LEVEL_WIDGET_VERSION_NAME: 0.1.${{ github.run_number }}
+          FLEET_KEYSTORE_PASSWORD: ${{ secrets.FLEET_KEYSTORE_PASSWORD }}
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon test assembleDebug
+      - name: Rename artifact
+        run: cp apps/level-widget/app/build/outputs/apk/debug/app-debug.apk level-widget-debug.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: level-widget-debug-apk
+          path: level-widget-debug.apk
+          retention-days: 30
+      - name: Publish release (level-widget-latest)
+        if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: level-widget-latest
+          name: Level ウィジェット — latest debug APK
+          prerelease: true
+          body: |
+            Debug APK built from ${{ github.sha }} (${{ github.ref_name }}).
+            インストール後、アプリを開いてセットアップ（ユーザー補助の有効化 → 対象アプリ → 施錠 / 解錠ボタンの記録）を済ませてください。
+          files: level-widget-debug.apk

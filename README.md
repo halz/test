@@ -93,6 +93,13 @@ bash scripts/enroll/macos.sh --password '<ダッシュボード用パスワー�
   キーを変えた直後の 1 回だけは、端末の旧アプリをアンインストールしてから入れ直してください。Secrets が無い場合は警告を出して従来どおり使い捨てキーで署名します。
   ローカルでビルドする場合は Android Studio / SDK を入れて `cd apps/web && npx cap sync android && cd android && ./gradlew assembleDebug`。
 
+## Level Lock ウィジェット（Android）
+
+このリポジトリにはフリートコンソールとは独立した Android アプリ `apps/level-widget` も入っています。
+Level Lock / Level Bolt をホーム画面のウィジェットから 1 タップで施錠 / 解錠するためのもので、
+Level アプリに API が無いためアクセシビリティサービスで画面を代わりにタップします。
+詳細は [apps/level-widget/README.md](apps/level-widget/README.md) を参照してください。
+
 ## 構成
 
 ```
@@ -100,6 +107,7 @@ packages/hermes-client   Hermes のダッシュボード API / API サーバー�
 apps/server              コンソール本体 (Hono + node:sqlite)。/api/* と静的 SPA
 apps/web                 React SPA (Vite, PWA)。android/ は Capacitor プロジェクト
 apps/mock-hermes         テスト用モック Hermes（6 台）
+apps/level-widget        Level Lock を操作する Android ウィジェット（フリートコンソールとは独立）
 scripts/macmini          Mac mini への配備 (launchd)
 scripts/enroll           各マシンの有効化 (macOS / Windows)
 ```
