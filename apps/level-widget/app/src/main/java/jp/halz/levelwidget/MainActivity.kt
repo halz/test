@@ -9,6 +9,7 @@ import android.provider.Settings
 import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
+import java.util.Locale
 
 /** Setup screen: enable the service, pick the Level app, teach it the two buttons. */
 class MainActivity : Activity() {
@@ -28,6 +29,7 @@ class MainActivity : Activity() {
         findViewById<Button>(R.id.btn_learn_unlock).setOnClickListener { learn(LockAction.UNLOCK) }
         findViewById<Button>(R.id.btn_test_lock).setOnClickListener { test(LockAction.LOCK) }
         findViewById<Button>(R.id.btn_test_unlock).setOnClickListener { test(LockAction.UNLOCK) }
+        findViewById<Button>(R.id.btn_hold).setOnClickListener { pickHold() }
     }
 
     override fun onResume() {
@@ -45,11 +47,27 @@ class MainActivity : Activity() {
             else getString(R.string.target_set, labelOf(target), target)
         findViewById<TextView>(R.id.tv_lock).text = describe(LockAction.LOCK)
         findViewById<TextView>(R.id.tv_unlock).text = describe(LockAction.UNLOCK)
+        findViewById<TextView>(R.id.tv_hold).text = holdLabel(prefs.holdMillis)
     }
 
     private fun describe(action: LockAction): String {
         val matcher = prefs.matcher(action) ?: return getString(R.string.button_unset)
-        return getString(R.string.button_set, matcher.describe())
+        val how = getString(if (matcher.longPress) R.string.press_long else R.string.press_tap)
+        return getString(R.string.button_set, matcher.describe(), how)
+    }
+
+    private fun holdLabel(millis: Long): String =
+        getString(R.string.hold_seconds, String.format(Locale.getDefault(), "%.1f", millis / 1000.0))
+
+    private fun pickHold() {
+        val labels = HOLD_CHOICES.map { holdLabel(it) }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.hold_pick)
+            .setItems(labels.toTypedArray()) { _, which ->
+                prefs.holdMillis = HOLD_CHOICES[which]
+                render()
+            }
+            .show()
     }
 
     private fun labelOf(packageName: String): String = try {
@@ -109,5 +127,9 @@ class MainActivity : Activity() {
 
     private fun toast(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+    }
+
+    private companion object {
+        val HOLD_CHOICES = longArrayOf(800L, Prefs.DEFAULT_HOLD_MILLIS, 2_500L, 4_000L)
     }
 }

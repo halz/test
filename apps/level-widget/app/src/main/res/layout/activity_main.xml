@@ -125,6 +125,31 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="24dp"
+            android:text="@string/setup_hold"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tv_hold"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/hold_note"
+            android:textSize="13sp" />
+
+        <Button
+            android:id="@+id/btn_hold"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/hold_pick" />
+
+        <TextView
+            android:textSize="16sp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
             android:text="@string/setup_widget"
             android:textStyle="bold" />
 

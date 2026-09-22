@@ -5,9 +5,10 @@ import org.json.JSONObject
 /**
  * How to find the Level app's lock / unlock button again after the user pointed at it once.
  *
- * The identifiers are recorded from the accessibility event of the real tap, so we do not need to
+ * The identifiers are recorded from the accessibility event of the real press, so we do not need to
  * know anything about the Level app up front. [tapX] / [tapY] are the centre of the button at
  * recording time and are only used when none of the identifiers match any node on screen.
+ * [longPress] mirrors how the user pressed it while recording, so playback presses it the same way.
  */
 data class NodeMatcher(
     val viewId: String?,
@@ -16,6 +17,7 @@ data class NodeMatcher(
     val className: String?,
     val tapX: Int,
     val tapY: Int,
+    val longPress: Boolean,
 ) {
     /**
      * How well a node on screen matches this recording: higher is better, -1 means no match.
@@ -39,6 +41,7 @@ data class NodeMatcher(
         .put("className", className ?: JSONObject.NULL)
         .put("tapX", tapX)
         .put("tapY", tapY)
+        .put("longPress", longPress)
         .toString()
 
     companion object {
@@ -53,6 +56,7 @@ data class NodeMatcher(
                     className = json.optStringOrNull("className"),
                     tapX = json.optInt("tapX", -1),
                     tapY = json.optInt("tapY", -1),
+                    longPress = json.optBoolean("longPress", false),
                 )
             } catch (e: Exception) {
                 null

@@ -1,6 +1,7 @@
 package jp.halz.levelwidget
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityService.GestureResultCallback
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
 import android.graphics.Rect
@@ -15,8 +16,8 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Drives the Level app on the user's behalf: records which node is the lock / unlock button, and
- * later finds and clicks that node when the widget asks for it.
+ * Drives the Level app on the user's behalf: records which node is the lock / unlock button and
+ * how it was pressed, then presses it the same way when the widget asks for it.
  */
 class LevelAccessibilityService : AccessibilityService() {
 
@@ -56,7 +57,9 @@ class LevelAccessibilityService : AccessibilityService() {
         val target = prefs.targetPackage ?: return
         if (event.packageName?.toString() != target) return
 
-        if (event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
+        if (event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED ||
+            event.eventType == AccessibilityEvent.TYPE_VIEW_LONG_CLICKED
+        ) {
             val learning = prefs.learning
             if (learning != null) {
                 record(learning, event)
@@ -79,6 +82,7 @@ class LevelAccessibilityService : AccessibilityService() {
             className = source?.className?.toString(),
             tapX = if (bounds.width() > 0) bounds.centerX() else -1,
             tapY = if (bounds.height() > 0) bounds.centerY() else -1,
+            longPress = event.eventType == AccessibilityEvent.TYPE_VIEW_LONG_CLICKED,
         )
         if (matcher.viewId == null && matcher.contentDescription == null &&
             matcher.text == null && matcher.tapX < 0
@@ -88,7 +92,8 @@ class LevelAccessibilityService : AccessibilityService() {
         }
         prefs.setMatcher(action, matcher)
         prefs.learning = null
-        toast(getString(R.string.learn_recorded, getString(action.labelRes), matcher.describe()))
+        val how = getString(if (matcher.longPress) R.string.press_long else R.string.press_tap)
+        toast(getString(R.string.learn_recorded, getString(action.labelRes), matcher.describe(), how))
         LockWidgetProvider.refresh(this)
     }
 
@@ -111,9 +116,24 @@ class LevelAccessibilityService : AccessibilityService() {
         if (root.packageName?.toString() != prefs.targetPackage) return false
 
         val node = findBest(root, matcher)
-        val done = if (node != null) clickUp(node) else tapAt(matcher)
-        if (!done) return false
+        val result = if (node != null) press(node, matcher, action)
+        else touch(matcher, matcher.tapX, matcher.tapY, action)
+        return when (result) {
+            Press.DONE -> {
+                succeeded(action)
+                true
+            }
+            // A held gesture finishes later; the dispatch callback reports the outcome.
+            Press.DISPATCHED -> {
+                handler.removeCallbacks(retry)
+                pendingAction = null
+                true
+            }
+            Press.FAILED -> false
+        }
+    }
 
+    private fun succeeded(action: LockAction) {
         complete(
             getString(
                 R.string.status_done,
@@ -121,7 +141,6 @@ class LevelAccessibilityService : AccessibilityService() {
                 SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date()),
             )
         )
-        return true
     }
 
     private fun complete(status: String) {
@@ -156,24 +175,50 @@ class LevelAccessibilityService : AccessibilityService() {
         return best
     }
 
-    /** The recorded node is not always the clickable one; walk up until something takes the click. */
-    private fun clickUp(node: AccessibilityNodeInfo): Boolean {
+    private enum class Press { DONE, DISPATCHED, FAILED }
+
+    /**
+     * Presses the node the way it was recorded. The node that reports the press is not always the
+     * one that handles it, so walk up until an ancestor accepts the action; if none does, the
+     * button is a custom view that only reacts to a real touch, so put a finger on it instead.
+     */
+    private fun press(node: AccessibilityNodeInfo, matcher: NodeMatcher, action: LockAction): Press {
+        val nodeAction = if (matcher.longPress) AccessibilityNodeInfo.ACTION_LONG_CLICK
+        else AccessibilityNodeInfo.ACTION_CLICK
         var current: AccessibilityNodeInfo? = node
         var depth = 0
-        while (current != null && depth < MAX_CLICK_DEPTH) {
-            if (current.isClickable && current.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+        while (current != null && depth < MAX_PRESS_DEPTH) {
+            val accepts = if (matcher.longPress) current.isLongClickable else current.isClickable
+            if (accepts && current.performAction(nodeAction)) return Press.DONE
             current = current.parent
             depth++
         }
-        return false
+        val bounds = Rect()
+        node.getBoundsInScreen(bounds)
+        val onScreen = bounds.width() > 0 && bounds.height() > 0
+        val x = if (onScreen) bounds.centerX() else matcher.tapX
+        val y = if (onScreen) bounds.centerY() else matcher.tapY
+        return touch(matcher, x, y, action)
     }
 
-    /** Last resort for buttons the Level app draws without any accessibility identifier. */
-    private fun tapAt(matcher: NodeMatcher): Boolean {
-        if (matcher.tapX < 0 || matcher.tapY < 0) return false
-        val path = Path().apply { moveTo(matcher.tapX.toFloat(), matcher.tapY.toFloat()) }
-        val stroke = GestureDescription.StrokeDescription(path, 0L, TAP_DURATION_MS)
-        return dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
+    /** A real touch on the screen: a quick tap, or held down for the configured time. */
+    private fun touch(matcher: NodeMatcher, x: Int, y: Int, action: LockAction): Press {
+        if (x < 0 || y < 0) return Press.FAILED
+        val path = Path().apply { moveTo(x.toFloat(), y.toFloat()) }
+        val duration = if (matcher.longPress) prefs.holdMillis else TAP_DURATION_MS
+        val stroke = GestureDescription.StrokeDescription(path, 0L, duration)
+        val callback = object : GestureResultCallback() {
+            override fun onCompleted(description: GestureDescription?) = succeeded(action)
+
+            override fun onCancelled(description: GestureDescription?) =
+                complete(getString(R.string.status_not_found, getString(action.labelRes)))
+        }
+        val dispatched = dispatchGesture(
+            GestureDescription.Builder().addStroke(stroke).build(),
+            callback,
+            handler,
+        )
+        return if (dispatched) Press.DISPATCHED else Press.FAILED
     }
 
     private fun toast(message: String) {
@@ -185,7 +230,7 @@ class LevelAccessibilityService : AccessibilityService() {
         private const val TIMEOUT_MS = 15_000L
         private const val TAP_DURATION_MS = 60L
         private const val MAX_NODES = 2_000
-        private const val MAX_CLICK_DEPTH = 6
+        private const val MAX_PRESS_DEPTH = 6
 
         @Volatile
         private var instance: LevelAccessibilityService? = null
