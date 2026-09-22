@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd LaunchAgent: runs the sync at login and every hour (the macOS
+  equivalent of the Windows Task Scheduler trigger in the spec).
+
+  Install:
+    1. Edit the absolute paths below to match your machine.
+    2. cp this file to ~/Library/LaunchAgents/com.unitedpetroleum.outlook-obsidian.plist
+    3. launchctl load ~/Library/LaunchAgents/com.unitedpetroleum.outlook-obsidian.plist
+  Uninstall:
+    launchctl unload ~/Library/LaunchAgents/com.unitedpetroleum.outlook-obsidian.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.unitedpetroleum.outlook-obsidian</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/Yoshi/outlook-to-obsidian/.venv/bin/python</string>
+        <string>-m</string>
+        <string>src.main</string>
+        <string>-c</string>
+        <string>/Users/Yoshi/outlook-to-obsidian/config.yaml</string>
+        <string>sync</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/Yoshi/outlook-to-obsidian</string>
+
+    <!-- At login -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Every hour (3600s) -->
+    <key>StartInterval</key>
+    <integer>3600</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/Yoshi/outlook-to-obsidian/logs/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/Yoshi/outlook-to-obsidian/logs/launchd.err.log</string>
+</dict>
+</plist>

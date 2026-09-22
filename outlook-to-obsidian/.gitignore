@@ -1,0 +1,17 @@
+# User config (copy from config.example.yaml)
+config.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# py2app build artifacts
+build/
+dist/
+
+# Runtime
+logs/
+*.log
+.sync_state.db
