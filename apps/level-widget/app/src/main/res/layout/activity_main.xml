@@ -15,11 +15,11 @@
             android:text="@string/setup_intro" />
 
         <TextView
-            android:textSize="16sp"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="24dp"
             android:text="@string/setup_service"
+            android:textSize="16sp"
             android:textStyle="bold" />
 
         <TextView
@@ -40,11 +40,11 @@
             android:text="@string/open_settings" />
 
         <TextView
-            android:textSize="16sp"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="24dp"
             android:text="@string/setup_target"
+            android:textSize="16sp"
             android:textStyle="bold" />
 
         <TextView
@@ -59,91 +59,38 @@
             android:text="@string/target_pick" />
 
         <TextView
-            android:textSize="16sp"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="24dp"
-            android:text="@string/setup_lock"
-            android:textStyle="bold" />
-
-        <TextView
-            android:id="@+id/tv_lock"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal">
-
-            <Button
-                android:id="@+id/btn_learn_lock"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/learn" />
-
-            <Button
-                android:id="@+id/btn_pick_lock"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/learn_pick" />
-
-            <Button
-                android:id="@+id/btn_test_lock"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/test" />
-        </LinearLayout>
-
-        <TextView
+            android:text="@string/setup_locks"
             android:textSize="16sp"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
-            android:text="@string/setup_unlock"
             android:textStyle="bold" />
 
         <TextView
-            android:id="@+id/tv_unlock"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content" />
-
-        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal">
-
-            <Button
-                android:id="@+id/btn_learn_unlock"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/learn" />
-
-            <Button
-                android:id="@+id/btn_pick_unlock"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/learn_pick" />
-
-            <Button
-                android:id="@+id/btn_test_unlock"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/test" />
-        </LinearLayout>
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/setup_hint"
+            android:text="@string/setup_locks_hint"
             android:textSize="13sp" />
 
+        <LinearLayout
+            android:id="@+id/lock_list"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+
+        <Button
+            android:id="@+id/btn_add_lock"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/lock_add" />
+
         <TextView
-            android:textSize="16sp"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="24dp"
             android:text="@string/setup_widget"
+            android:textSize="16sp"
             android:textStyle="bold" />
 
         <TextView

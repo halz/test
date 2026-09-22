@@ -1,6 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Only to see whether an associated lock is advertising nearby; nothing connects to it. -->
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_ADMIN"
+        android:maxSdkVersion="30" />
+    <uses-permission
+        android:name="android.permission.ACCESS_FINE_LOCATION"
+        android:maxSdkVersion="30" />
+
     <!-- Needed to list installed apps on the setup screen and to launch the chosen one. -->
     <queries>
         <intent>
@@ -26,6 +40,13 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".HoldActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:theme="@style/Hold" />
+
         <receiver
             android:name=".LockWidgetProvider"
             android:exported="false">
@@ -36,6 +57,10 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/widget_lock_info" />
         </receiver>
+
+        <receiver
+            android:name=".Ble$ScanReceiver"
+            android:exported="false" />
 
         <service
             android:name=".LevelAccessibilityService"

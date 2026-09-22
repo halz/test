@@ -6,38 +6,32 @@ import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.view.View
 import android.widget.RemoteViews
 
-/** Home screen widget with a lock and an unlock button. */
+/** Home screen widget: one row per registered lock. */
 class LockWidgetProvider : AppWidgetProvider() {
 
     override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) {
-        val views = buildViews(context)
-        manager.updateAppWidget(ids, views)
+        // A widget update is also a good moment to make sure the background scan is still armed.
+        Ble.start(context)
+        manager.updateAppWidget(ids, buildViews(context))
     }
 
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action == ACTION_RUN) {
-            LockAction.fromName(intent.getStringExtra(EXTRA_ACTION))?.let { run(context, it) }
+        if (intent.action == ACTION_REFRESH) {
+            Ble.start(context)
+            refresh(context)
             return
         }
         super.onReceive(context, intent)
     }
 
-    private fun run(context: Context, action: LockAction) {
-        val failure = LockRunner.run(context, action)
-        if (failure != null) {
-            Prefs(context).status = failure
-            refresh(context)
-            context.startActivity(
-                Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            )
-        }
-    }
-
     companion object {
-        private const val ACTION_RUN = "jp.halz.levelwidget.RUN"
-        private const val EXTRA_ACTION = "action"
+        private const val ACTION_REFRESH = "jp.halz.levelwidget.REFRESH"
+
+        /** Locks whose Bluetooth device has not been heard from are drawn faded. */
+        private const val OUT_OF_RANGE_ALPHA = 0.4f
 
         fun refresh(context: Context) {
             val manager = AppWidgetManager.getInstance(context)
@@ -47,26 +41,73 @@ class LockWidgetProvider : AppWidgetProvider() {
 
         private fun buildViews(context: Context): RemoteViews {
             val views = RemoteViews(context.packageName, R.layout.widget_lock)
-            views.setOnClickPendingIntent(R.id.widget_lock, pendingIntent(context, LockAction.LOCK))
-            views.setOnClickPendingIntent(R.id.widget_unlock, pendingIntent(context, LockAction.UNLOCK))
-            val status = Prefs(context).status
-            views.setTextViewText(
-                R.id.widget_status,
-                status.ifEmpty { context.getString(R.string.status_idle) },
-            )
+            views.setOnClickPendingIntent(R.id.widget_refresh, refreshIntent(context))
+            views.removeAllViews(R.id.widget_rows)
+
+            val prefs = Prefs(context)
+            val locks = prefs.locks
+            if (locks.isEmpty()) {
+                views.addView(R.id.widget_rows, emptyRow(context))
+                return views
+            }
+            locks.forEach { views.addView(R.id.widget_rows, row(context, prefs, it)) }
             return views
         }
 
-        private fun pendingIntent(context: Context, action: LockAction): PendingIntent {
-            val intent = Intent(context, LockWidgetProvider::class.java)
-                .setAction(ACTION_RUN)
-                .putExtra(EXTRA_ACTION, action.name)
-            return PendingIntent.getBroadcast(
+        private fun row(context: Context, prefs: Prefs, lock: Lock): RemoteViews {
+            val row = RemoteViews(context.packageName, R.layout.widget_row)
+            row.setTextViewText(R.id.row_name, lock.name)
+
+            val status = prefs.status(lock.id)
+            val running = status == context.getString(R.string.status_running)
+            row.setTextViewText(
+                R.id.row_status,
+                when {
+                    !lock.isReady -> context.getString(R.string.status_not_configured)
+                    status.isEmpty() -> context.getString(R.string.status_idle)
+                    else -> status
+                },
+            )
+            row.setViewVisibility(R.id.row_progress, if (running) View.VISIBLE else View.GONE)
+
+            // Unknown reachability is drawn as normal: only a lock we know is out of range fades.
+            val reachable = Ble.reachable(prefs, lock, context)
+            row.setFloat(R.id.row_body, "setAlpha", if (reachable == false) OUT_OF_RANGE_ALPHA else 1f)
+
+            row.setOnClickPendingIntent(R.id.row_body, holdIntent(context, lock))
+            return row
+        }
+
+        private fun emptyRow(context: Context): RemoteViews {
+            val row = RemoteViews(context.packageName, R.layout.widget_row)
+            row.setTextViewText(R.id.row_name, context.getString(R.string.widget_empty))
+            row.setTextViewText(R.id.row_status, context.getString(R.string.widget_empty_hint))
+            row.setViewVisibility(R.id.row_progress, View.GONE)
+            row.setOnClickPendingIntent(
+                R.id.row_body,
+                PendingIntent.getActivity(
+                    context,
+                    0,
+                    Intent(context, MainActivity::class.java),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                ),
+            )
+            return row
+        }
+
+        private fun holdIntent(context: Context, lock: Lock): PendingIntent =
+            PendingIntent.getActivity(
                 context,
-                action.ordinal,
-                intent,
+                lock.id.hashCode(),
+                HoldActivity.intent(context, lock),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
-        }
+
+        private fun refreshIntent(context: Context): PendingIntent = PendingIntent.getBroadcast(
+            context,
+            0,
+            Intent(context, LockWidgetProvider::class.java).setAction(ACTION_REFRESH),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
     }
 }

@@ -4,6 +4,5 @@
     <color name="widget_text">#FFFFFFFF</color>
     <color name="widget_muted">#B3FFFFFF</color>
     <color name="lock">#FF2F6FED</color>
-    <color name="unlock">#FF3B4252</color>
     <color name="launcher_background">#FF1F2430</color>
 </resources>

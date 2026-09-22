@@ -7,10 +7,9 @@ import android.content.Intent
 object LockRunner {
 
     /** Returns null on success, or a message explaining what is still missing. */
-    fun run(context: Context, action: LockAction): String? {
-        val prefs = Prefs(context)
-        val target = prefs.targetPackage
-        if (target == null || prefs.matcher(action) == null) {
+    fun run(context: Context, lock: Lock): String? {
+        val target = Prefs(context).targetPackage
+        if (target == null || !lock.isReady) {
             return context.getString(R.string.status_not_configured)
         }
         if (!LevelAccessibilityService.isRunning()) {
@@ -19,7 +18,7 @@ object LockRunner {
         val launch = context.packageManager.getLaunchIntentForPackage(target)
             ?: return context.getString(R.string.status_app_missing)
         context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        LevelAccessibilityService.request(action)
+        LevelAccessibilityService.request(lock)
         return null
     }
 }
