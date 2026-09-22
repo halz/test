@@ -3,13 +3,20 @@ package jp.halz.levelwidget
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityService.GestureResultCallback
 import android.accessibilityservice.GestureDescription
+import android.graphics.PixelFormat
 import android.graphics.Path
 import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.view.Gravity
+import android.view.LayoutInflater
+import android.view.View
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.widget.Button
+import android.widget.TextView
 import android.widget.Toast
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -26,6 +33,7 @@ class LevelAccessibilityService : AccessibilityService() {
 
     private var pendingAction: LockAction? = null
     private var pendingDeadline = 0L
+    private var picker: PickerOverlay? = null
 
     private val retry = object : Runnable {
         override fun run() {
@@ -47,6 +55,7 @@ class LevelAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         instance = null
         handler.removeCallbacks(retry)
+        hidePicker()
         super.onDestroy()
     }
 
@@ -83,6 +92,7 @@ class LevelAccessibilityService : AccessibilityService() {
             tapX = if (bounds.width() > 0) bounds.centerX() else -1,
             tapY = if (bounds.height() > 0) bounds.centerY() else -1,
             longPress = event.eventType == AccessibilityEvent.TYPE_VIEW_LONG_CLICKED,
+            holdMillis = 0L,
         )
         if (matcher.viewId == null && matcher.contentDescription == null &&
             matcher.text == null && matcher.tapX < 0
@@ -92,9 +102,74 @@ class LevelAccessibilityService : AccessibilityService() {
         }
         prefs.setMatcher(action, matcher)
         prefs.learning = null
-        val how = getString(if (matcher.longPress) R.string.press_long else R.string.press_tap)
-        toast(getString(R.string.learn_recorded, getString(action.labelRes), matcher.describe(), how))
+        toast(getString(R.string.learn_recorded, getString(action.labelRes), matcher.describe(), pressLabel(matcher)))
         LockWidgetProvider.refresh(this)
+    }
+
+    /**
+     * Puts a window over the Level app so the user can point at a button that reports no
+     * accessibility events. It starts as a banner at the top so the Level app stays usable; the
+     * "start" button then expands it to full screen to capture the next press.
+     */
+    private fun showPicker(action: LockAction) {
+        hidePicker()
+        val windows = getSystemService(WindowManager::class.java) ?: return
+        val view = LayoutInflater.from(this).inflate(R.layout.overlay_picker, null) as PickerOverlay
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT,
+        ).apply { gravity = Gravity.TOP }
+
+        val label = getString(action.labelRes)
+        val text = view.findViewById<TextView>(R.id.picker_text)
+        val start = view.findViewById<Button>(R.id.picker_start)
+        text.text = getString(R.string.picker_waiting, label)
+        start.setOnClickListener {
+            view.arm()
+            start.visibility = View.GONE
+            text.text = getString(R.string.picker_armed, label)
+            params.height = WindowManager.LayoutParams.MATCH_PARENT
+            windows.updateViewLayout(view, params)
+        }
+        view.findViewById<Button>(R.id.picker_cancel).setOnClickListener { hidePicker() }
+        view.onPicked = { x, y, held -> recordPosition(action, x, y, held) }
+
+        windows.addView(view, params)
+        picker = view
+    }
+
+    private fun hidePicker() {
+        val view = picker ?: return
+        picker = null
+        runCatching { getSystemService(WindowManager::class.java)?.removeView(view) }
+    }
+
+    private fun recordPosition(action: LockAction, x: Int, y: Int, heldMillis: Long) {
+        val longPress = heldMillis >= LONG_PRESS_MS
+        val matcher = NodeMatcher(
+            viewId = null,
+            contentDescription = null,
+            text = null,
+            className = null,
+            tapX = x,
+            tapY = y,
+            longPress = longPress,
+            holdMillis = if (longPress) heldMillis.coerceIn(LONG_PRESS_MS, MAX_HOLD_MS) else 0L,
+        )
+        prefs.setMatcher(action, matcher)
+        prefs.learning = null
+        hidePicker()
+        toast(getString(R.string.learn_recorded, getString(action.labelRes), matcher.describe(), pressLabel(matcher)))
+        LockWidgetProvider.refresh(this)
+    }
+
+    private fun pressLabel(matcher: NodeMatcher): String = when {
+        !matcher.longPress -> getString(R.string.press_tap)
+        matcher.holdMillis > 0 -> getString(R.string.press_long_seconds, seconds(matcher.holdMillis))
+        else -> getString(R.string.press_long)
     }
 
     /** Queued by the widget once the Level app has been brought to the foreground. */
@@ -205,7 +280,11 @@ class LevelAccessibilityService : AccessibilityService() {
     private fun touch(matcher: NodeMatcher, x: Int, y: Int, action: LockAction): Press {
         if (x < 0 || y < 0) return Press.FAILED
         val path = Path().apply { moveTo(x.toFloat(), y.toFloat()) }
-        val duration = if (matcher.longPress) prefs.holdMillis else TAP_DURATION_MS
+        val duration = when {
+            !matcher.longPress -> TAP_DURATION_MS
+            matcher.holdMillis > 0 -> matcher.holdMillis
+            else -> DEFAULT_HOLD_MS
+        }
         val stroke = GestureDescription.StrokeDescription(path, 0L, duration)
         val callback = object : GestureResultCallback() {
             override fun onCompleted(description: GestureDescription?) = succeeded(action)
@@ -229,6 +308,9 @@ class LevelAccessibilityService : AccessibilityService() {
         private const val RETRY_INTERVAL_MS = 500L
         private const val TIMEOUT_MS = 15_000L
         private const val TAP_DURATION_MS = 60L
+        private const val LONG_PRESS_MS = 400L
+        private const val MAX_HOLD_MS = 10_000L
+        private const val DEFAULT_HOLD_MS = 1_500L
         private const val MAX_NODES = 2_000
         private const val MAX_PRESS_DEPTH = 6
 
@@ -242,5 +324,15 @@ class LevelAccessibilityService : AccessibilityService() {
             service.enqueue(action)
             return true
         }
+
+        /** Starts the "point at the button" flow from the setup screen. */
+        fun startPicking(action: LockAction): Boolean {
+            val service = instance ?: return false
+            service.handler.post { service.showPicker(action) }
+            return true
+        }
+
+        fun seconds(millis: Long): String =
+            String.format(Locale.getDefault(), "%.1f", millis / 1000.0)
     }
 }

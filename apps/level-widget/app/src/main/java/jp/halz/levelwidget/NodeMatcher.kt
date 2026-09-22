@@ -8,7 +8,9 @@ import org.json.JSONObject
  * The identifiers are recorded from the accessibility event of the real press, so we do not need to
  * know anything about the Level app up front. [tapX] / [tapY] are the centre of the button at
  * recording time and are only used when none of the identifiers match any node on screen.
- * [longPress] mirrors how the user pressed it while recording, so playback presses it the same way.
+ * [longPress] and [holdMillis] mirror how the user pressed it while recording, so playback presses
+ * it the same way. [holdMillis] is 0 when the press was not measured (recorded from an event rather
+ * than from the picker overlay).
  */
 data class NodeMatcher(
     val viewId: String?,
@@ -18,6 +20,7 @@ data class NodeMatcher(
     val tapX: Int,
     val tapY: Int,
     val longPress: Boolean,
+    val holdMillis: Long,
 ) {
     /**
      * How well a node on screen matches this recording: higher is better, -1 means no match.
@@ -42,6 +45,7 @@ data class NodeMatcher(
         .put("tapX", tapX)
         .put("tapY", tapY)
         .put("longPress", longPress)
+        .put("holdMillis", holdMillis)
         .toString()
 
     companion object {
@@ -57,6 +61,7 @@ data class NodeMatcher(
                     tapX = json.optInt("tapX", -1),
                     tapY = json.optInt("tapY", -1),
                     longPress = json.optBoolean("longPress", false),
+                    holdMillis = json.optLong("holdMillis", 0L),
                 )
             } catch (e: Exception) {
                 null

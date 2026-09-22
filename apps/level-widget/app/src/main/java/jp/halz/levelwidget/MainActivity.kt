@@ -9,7 +9,6 @@ import android.provider.Settings
 import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
-import java.util.Locale
 
 /** Setup screen: enable the service, pick the Level app, teach it the two buttons. */
 class MainActivity : Activity() {
@@ -29,7 +28,8 @@ class MainActivity : Activity() {
         findViewById<Button>(R.id.btn_learn_unlock).setOnClickListener { learn(LockAction.UNLOCK) }
         findViewById<Button>(R.id.btn_test_lock).setOnClickListener { test(LockAction.LOCK) }
         findViewById<Button>(R.id.btn_test_unlock).setOnClickListener { test(LockAction.UNLOCK) }
-        findViewById<Button>(R.id.btn_hold).setOnClickListener { pickHold() }
+        findViewById<Button>(R.id.btn_pick_lock).setOnClickListener { pick(LockAction.LOCK) }
+        findViewById<Button>(R.id.btn_pick_unlock).setOnClickListener { pick(LockAction.UNLOCK) }
     }
 
     override fun onResume() {
@@ -47,27 +47,17 @@ class MainActivity : Activity() {
             else getString(R.string.target_set, labelOf(target), target)
         findViewById<TextView>(R.id.tv_lock).text = describe(LockAction.LOCK)
         findViewById<TextView>(R.id.tv_unlock).text = describe(LockAction.UNLOCK)
-        findViewById<TextView>(R.id.tv_hold).text = holdLabel(prefs.holdMillis)
     }
 
     private fun describe(action: LockAction): String {
         val matcher = prefs.matcher(action) ?: return getString(R.string.button_unset)
-        val how = getString(if (matcher.longPress) R.string.press_long else R.string.press_tap)
+        val how = when {
+            !matcher.longPress -> getString(R.string.press_tap)
+            matcher.holdMillis > 0 ->
+                getString(R.string.press_long_seconds, LevelAccessibilityService.seconds(matcher.holdMillis))
+            else -> getString(R.string.press_long)
+        }
         return getString(R.string.button_set, matcher.describe(), how)
-    }
-
-    private fun holdLabel(millis: Long): String =
-        getString(R.string.hold_seconds, String.format(Locale.getDefault(), "%.1f", millis / 1000.0))
-
-    private fun pickHold() {
-        val labels = HOLD_CHOICES.map { holdLabel(it) }
-        AlertDialog.Builder(this)
-            .setTitle(R.string.hold_pick)
-            .setItems(labels.toTypedArray()) { _, which ->
-                prefs.holdMillis = HOLD_CHOICES[which]
-                render()
-            }
-            .show()
     }
 
     private fun labelOf(packageName: String): String = try {
@@ -102,23 +92,33 @@ class MainActivity : Activity() {
     }
 
     private fun learn(action: LockAction) {
+        val launch = openTarget() ?: return
+        prefs.learning = action
+        toast(getString(R.string.learn_prompt, getString(action.labelRes)))
+        startActivity(launch)
+    }
+
+    /** For buttons the Level app draws itself and never reports: point at them on screen. */
+    private fun pick(action: LockAction) {
+        val launch = openTarget() ?: return
+        prefs.learning = null
+        LevelAccessibilityService.startPicking(action)
+        startActivity(launch)
+    }
+
+    private fun openTarget(): Intent? {
         if (!LevelAccessibilityService.isRunning()) {
             toast(getString(R.string.status_service_off))
-            return
+            return null
         }
         val target = prefs.targetPackage
         if (target == null) {
             toast(getString(R.string.target_unset))
-            return
+            return null
         }
         val launch = packageManager.getLaunchIntentForPackage(target)
-        if (launch == null) {
-            toast(getString(R.string.status_app_missing))
-            return
-        }
-        prefs.learning = action
-        toast(getString(R.string.learn_prompt, getString(action.labelRes)))
-        startActivity(launch)
+        if (launch == null) toast(getString(R.string.status_app_missing))
+        return launch
     }
 
     private fun test(action: LockAction) {
@@ -127,9 +127,5 @@ class MainActivity : Activity() {
 
     private fun toast(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_LONG).show()
-    }
-
-    private companion object {
-        val HOLD_CHOICES = longArrayOf(800L, Prefs.DEFAULT_HOLD_MILLIS, 2_500L, 4_000L)
     }
 }

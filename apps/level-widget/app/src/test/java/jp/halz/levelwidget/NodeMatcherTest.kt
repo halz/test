@@ -14,6 +14,7 @@ class NodeMatcherTest {
         tapX = 540,
         tapY = 1200,
         longPress = true,
+        holdMillis = 1_800L,
     )
 
     @Test
@@ -31,7 +32,7 @@ class NodeMatcherTest {
 
     @Test
     fun `a recording without identifiers never matches by null`() {
-        val boundsOnly = NodeMatcher(null, null, null, null, 100, 200, false)
+        val boundsOnly = NodeMatcher(null, null, null, null, 100, 200, false, 0L)
         assertEquals(-1, boundsOnly.score(null, null, null))
         assertEquals(-1, boundsOnly.score("id", "desc", "text"))
     }
@@ -43,7 +44,7 @@ class NodeMatcherTest {
 
     @Test
     fun `a recording with only coordinates keeps its nulls`() {
-        val boundsOnly = NodeMatcher(null, null, null, null, 100, 200, false)
+        val boundsOnly = NodeMatcher(null, null, null, null, 100, 200, false, 0L)
         assertEquals(boundsOnly, NodeMatcher.fromJson(boundsOnly.toJson()))
     }
 
@@ -55,9 +56,16 @@ class NodeMatcherTest {
     }
 
     @Test
-    fun `a recording made before long press support counts as a tap`() {
+    fun `a recording made before long press support counts as an unmeasured tap`() {
         val old = """{"viewId":"com.level.home:id/lock_button","tapX":540,"tapY":1200}"""
-        assertEquals(false, NodeMatcher.fromJson(old)?.longPress)
+        val parsed = NodeMatcher.fromJson(old)
+        assertEquals(false, parsed?.longPress)
+        assertEquals(0L, parsed?.holdMillis)
+    }
+
+    @Test
+    fun `the measured hold survives the round trip`() {
+        assertEquals(1_800L, NodeMatcher.fromJson(recorded.toJson())?.holdMillis)
     }
 
     @Test
@@ -71,6 +79,6 @@ class NodeMatcherTest {
     fun `describe prefers the most human readable identifier`() {
         assertEquals("Lock", recorded.describe())
         assertEquals("lock_button", recorded.copy(contentDescription = null, text = null).describe())
-        assertEquals("(100, 200)", NodeMatcher(null, null, null, null, 100, 200, false).describe())
+        assertEquals("(100, 200)", NodeMatcher(null, null, null, null, 100, 200, false, 0L).describe())
     }
 }

@@ -20,9 +20,9 @@
     <string name="setup_target">2. 対象アプリ</string>
     <string name="setup_lock">3. 施錠ボタン</string>
     <string name="setup_unlock">4. 解錠ボタン</string>
-    <string name="setup_hold">5. 長押しの長さ</string>
-    <string name="setup_widget">6. ホーム画面にウィジェットを置く</string>
+    <string name="setup_widget">5. ホーム画面にウィジェットを置く</string>
     <string name="setup_widget_hint">ホーム画面を長押し → ウィジェット → 「Level ウィジェット」を配置してください。</string>
+    <string name="setup_hint">「覚えさせる」で何も記録されない場合は「位置で覚える」を使ってください。画面の位置と押す長さをそのまま記録します。</string>
     <string name="setup_note">注意: ウィジェットは確認なしで解錠します。紛失時に備えて端末に画面ロックをかけておいてください。Level アプリの画面デザインが変わると記録し直しが必要です。</string>
 
     <string name="service_on">有効</string>
@@ -38,15 +38,17 @@
     <string name="button_set">記録済み: %1$s（%2$s）</string>
     <string name="press_tap">タップ</string>
     <string name="press_long">長押し</string>
+    <string name="press_long_seconds">長押し %1$s 秒</string>
     <string name="learn">覚えさせる</string>
     <string name="test">テスト</string>
     <string name="learn_prompt">Level アプリで「%1$s」のボタンを 1 回押してください（長押しのボタンなら長押しで）</string>
     <string name="learn_recorded">%1$s のボタンを記録しました: %2$s（%3$s）</string>
+    <string name="learn_pick">位置で覚える</string>
+    <string name="picker_waiting">「%1$s」のボタンが見えるところまで Level アプリを操作してから、「ここから」を押してください。</string>
+    <string name="picker_armed">「%1$s」のボタンを、いつもと同じ長さで押してください。この操作は Level アプリには届きません。</string>
+    <string name="picker_start">ここから</string>
+    <string name="picker_cancel">やめる</string>
     <string name="learn_failed">このボタンは識別できませんでした。別の場所を押してみてください</string>
-
-    <string name="hold_seconds">%1$s 秒</string>
-    <string name="hold_pick">長押しの長さを選ぶ</string>
-    <string name="hold_note">長押しで記録したボタンを、この長さだけ押し続けます。Level アプリが反応しない場合は長くしてみてください。</string>
 
     <string name="accessibility_description">Level アプリの施錠 / 解錠ボタンを記録し、ウィジェットから代わりに押します。</string>
 </resources>

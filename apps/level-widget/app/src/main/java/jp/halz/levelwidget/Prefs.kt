@@ -22,22 +22,14 @@ class Prefs(context: Context) {
         get() = LockAction.fromName(prefs.getString(KEY_LEARNING, null))
         set(value) = prefs.edit().putString(KEY_LEARNING, value?.name).apply()
 
-    /** How long a long press holds the button down. The Level app decides what is long enough. */
-    var holdMillis: Long
-        get() = prefs.getLong(KEY_HOLD_MILLIS, DEFAULT_HOLD_MILLIS)
-        set(value) = prefs.edit().putLong(KEY_HOLD_MILLIS, value).apply()
-
     /** Last line shown on the widget. */
     var status: String
         get() = prefs.getString(KEY_STATUS, "") ?: ""
         set(value) = prefs.edit().putString(KEY_STATUS, value).apply()
 
-    companion object {
-        const val DEFAULT_HOLD_MILLIS = 1_500L
-
-        private const val KEY_HOLD_MILLIS = "hold_millis"
-        private const val KEY_TARGET_PACKAGE = "target_package"
-        private const val KEY_LEARNING = "learning"
-        private const val KEY_STATUS = "status"
+    private companion object {
+        const val KEY_TARGET_PACKAGE = "target_package"
+        const val KEY_LEARNING = "learning"
+        const val KEY_STATUS = "status"
     }
 }
