@@ -99,6 +99,7 @@ bash scripts/enroll/macos.sh --password '<ダッシュボード用パスワー�
 Level Lock / Level Bolt をホーム画面のウィジェットから 1 タップで施錠 / 解錠するためのもので、
 Level アプリに API が無いためアクセシビリティサービスで画面を代わりにタップします。
 詳細は [apps/level-widget/README.md](apps/level-widget/README.md) を参照してください。
+APK は Release **level-widget-latest** から取得できます: https://github.com/halz/test/releases/tag/level-widget-latest
 
 ## 構成
 

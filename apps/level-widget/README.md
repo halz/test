@@ -10,6 +10,10 @@ Level のアプリには外部から施錠 / 解錠を呼び出す API も Inten
 
 Level アプリの内部 ID はこちらからは分からないので、**最初に 1 回だけ実際のボタンを押して覚えさせる**（記録する）作りにしてあります。記録するのは押されたビューの `viewIdResourceName` / `contentDescription` / `text` / 画面上の座標で、再生時はこの順に優先して一致するノードを探し、見つかればクリック、どれも一致しなければ記録した座標をタップします。
 
+## インストール
+
+最新の debug APK は Release **level-widget-latest** から取得できます: https://github.com/halz/test/releases/tag/level-widget-latest
+
 ## セットアップ
 
 1. APK をインストールして「Level ウィジェット」を開く
