@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Level ウィジェット</string>
+    <string name="widget_label">Level Lock の施錠 / 解錠</string>
+    <string name="widget_title">Level</string>
+    <string name="widget_refresh">⟳</string>
+    <string name="widget_empty">未設定</string>
+    <string name="widget_empty_hint">押してセットアップ</string>
+
+    <string name="status_idle">未実行</string>
+    <string name="status_running">実行中…</string>
+    <string name="status_done">操作しました（%1$s）</string>
+    <string name="status_cancelled">操作が中断されました</string>
+    <string name="status_no_app">Level アプリが前面に来ませんでした</string>
+    <string name="status_not_configured">ボタンが未記録です</string>
+    <string name="status_service_off">アクセシビリティサービスが無効です</string>
+    <string name="status_app_missing">対象アプリが見つかりません</string>
+
+    <string name="setup_intro">Level のアプリには外部から施錠 / 解錠する API が無いため、このアプリはアクセシビリティサービスで Level アプリの画面を代わりに押します。ロックごとに、押す位置と押す長さを 1 回だけ覚えさせてください。</string>
+    <string name="setup_service">1. アクセシビリティサービス</string>
+    <string name="setup_target">2. 対象アプリ</string>
+    <string name="setup_locks">3. ロック</string>
+    <string name="setup_locks_hint">Level のボタンは 1 つで施錠と解錠が切り替わるので、ロックごとにボタンは 1 つです。複数のロックを登録できます。</string>
+    <string name="setup_widget">4. ホーム画面にウィジェットを置く</string>
+    <string name="setup_widget_hint">ホーム画面を長押し → ウィジェット → 「Level ウィジェット」を配置してください。ウィジェットのロックを押すと長押し確認の画面が出ます。</string>
+    <string name="setup_note">注意: ウィジェットからの操作は長押し確認だけで実行されます。端末に画面ロックをかけておいてください。Level アプリの画面レイアウトが変わると記録し直しが必要です。</string>
+
+    <string name="service_on">有効</string>
+    <string name="service_off">無効</string>
+    <string name="service_hint">Android の設定 → ユーザー補助 →「Level ウィジェット」をオンにしてください。\n\n「アプリはアクセスを拒否されました」と出る場合は Android の「制限付き設定」です。設定 → アプリ →「Level ウィジェット」→ 右上の ⋮ →「制限付き設定を許可」を先に実行してください。</string>
+    <string name="open_settings">アクセシビリティ設定を開く</string>
+
+    <string name="target_unset">未設定</string>
+    <string name="target_set">%1$s（%2$s）</string>
+    <string name="target_pick">対象アプリを選ぶ</string>
+
+    <string name="lock_add">ロックを追加</string>
+    <string name="lock_default_name">玄関</string>
+    <string name="lock_rename">名前</string>
+    <string name="lock_delete">削除</string>
+    <string name="lock_delete_confirm">「%1$s」を削除しますか？</string>
+    <string name="lock_learn">ボタンを覚える</string>
+    <string name="lock_ble_pick">Bluetooth 機器</string>
+    <string name="test">テスト</string>
+
+    <string name="button_unset">ボタン: 未記録</string>
+    <string name="button_set">ボタン: %1$s / %2$s 秒の長押し</string>
+    <string name="learn_recorded">「%1$s」のボタンを記録しました: %2$s / %3$s 秒</string>
+
+    <string name="picker_waiting">「%1$s」のボタンが見えるところまで Level アプリを操作してから、「ここから」を押してください。</string>
+    <string name="picker_armed">「%1$s」のボタンを、いつもと同じ長さで押してください。この操作は Level アプリには届きません。</string>
+    <string name="picker_start">ここから</string>
+    <string name="picker_cancel">やめる</string>
+
+    <string name="hold_prompt">長押し</string>
+    <string name="hold_holding">そのまま…</string>
+    <string name="hold_note">離すと中止します</string>
+
+    <string name="overlay_running">「%1$s」を操作しています…</string>
+
+    <string name="ble_unset">Bluetooth 機器: 未設定（圏内かどうかは表示しません）</string>
+    <string name="ble_set">Bluetooth 機器: %1$s</string>
+    <string name="ble_pick">このロックの機器を選ぶ</string>
+    <string name="ble_clear">紐づけを外す</string>
+    <string name="ble_scanning">スキャン中</string>
+    <string name="ble_scanning_hint">ロックの近くで数秒待ってください。</string>
+    <string name="ble_entry">%1$s\n%2$s / %3$d dBm</string>
+    <string name="ble_none">Bluetooth 機器が見つかりませんでした</string>
+    <string name="ble_off">Bluetooth が無効です</string>
+    <string name="ble_granted">スキャンを許可しました</string>
+    <string name="ble_denied">許可されなかったため、圏内の表示はできません</string>
+
+    <string name="accessibility_description">Level アプリのロックボタンの位置を覚え、ウィジェットから代わりに押します。</string>
+</resources>

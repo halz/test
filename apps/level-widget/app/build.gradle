@@ -1,0 +1,53 @@
+apply plugin: 'com.android.application'
+apply plugin: 'org.jetbrains.kotlin.android'
+
+// CI passes the run number so every build is an upgrade of the previous one.
+def widgetVersionCode = (System.getenv("LEVEL_WIDGET_VERSION_CODE") ?: "1") as Integer
+def widgetVersionName = System.getenv("LEVEL_WIDGET_VERSION_NAME") ?: "0.1.0"
+// Same stable signing key as the fleet console APK (see .github/workflows/level-widget-apk.yml).
+def keystorePath = System.getenv("FLEET_KEYSTORE_FILE")
+def keystore = (keystorePath && new File(keystorePath).exists()) ? new File(keystorePath) : null
+def keystorePassword = System.getenv("FLEET_KEYSTORE_PASSWORD") ?: ""
+
+android {
+    namespace "jp.halz.levelwidget"
+    compileSdk 34
+    defaultConfig {
+        applicationId "jp.halz.levelwidget"
+        minSdkVersion 26
+        targetSdkVersion 34
+        versionCode widgetVersionCode
+        versionName widgetVersionName
+    }
+    signingConfigs {
+        fixed {
+            storeFile keystore
+            storePassword keystorePassword
+            keyAlias "fleet"
+            keyPassword keystorePassword
+        }
+    }
+    buildTypes {
+        debug {
+            if (keystore != null) signingConfig signingConfigs.fixed
+        }
+        release {
+            minifyEnabled false
+            if (keystore != null) signingConfig signingConfigs.fixed
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+}
+
+dependencies {
+    testImplementation "junit:junit:4.13.2"
+    // Real org.json on the unit test classpath; the android.jar stub throws on every call.
+    testImplementation "org.json:json:20231013"
+}
