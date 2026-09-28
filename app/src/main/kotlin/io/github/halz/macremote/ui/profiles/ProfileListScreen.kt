@@ -7,12 +7,15 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -38,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import io.github.halz.macremote.data.Profile
 import io.github.halz.macremote.data.ProfileRepository
 import io.github.halz.macremote.data.ProfileTransfer
+import io.github.halz.macremote.data.RemoteReboot
 import io.github.halz.macremote.data.SecretStore
 import io.github.halz.macremote.session.SessionHolder
 import io.github.halz.macremote.session.SessionState
@@ -64,8 +68,40 @@ fun ProfileListScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var menuOpen by remember { mutableStateOf(false) }
+    var rebootTarget by remember { mutableStateOf<Profile?>(null) }
 
     fun toast(message: String) = Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+
+    rebootTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { rebootTarget = null },
+            title = { Text("${target.name.ifEmpty { target.host }} を強制再起動") },
+            text = {
+                Text(
+                    "Mac を今すぐ再起動します。保存していない作業は失われます。\n\n" +
+                        "Mac 側で「リモートログイン」が有効で、このアカウントが管理者である必要があります。"
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    rebootTarget = null
+                    scope.launch {
+                        runCatching {
+                            val password = secretStore.loadPassword(target.id).orEmpty()
+                            RemoteReboot.reboot(target.host, target.username, password)
+                        }.onSuccess {
+                            // The Mac is going down; drop the live session cleanly.
+                            sessionHolder.close(target.id)
+                            toast("再起動コマンドを送信しました")
+                        }.onFailure { toast("再起動失敗: ${it.message}") }
+                    }
+                }) { Text("再起動する") }
+            },
+            dismissButton = {
+                TextButton(onClick = { rebootTarget = null }) { Text("キャンセル") }
+            },
+        )
+    }
 
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json")
@@ -166,6 +202,13 @@ fun ProfileListScreen(
                         connected = connected,
                         onConnect = { onConnect(profile) },
                         onEdit = { onEdit(profile.id) },
+                        onReboot = {
+                            if (profile.username.isEmpty()) {
+                                toast("再起動にはユーザ名入りのプロファイルが必要です")
+                            } else {
+                                rebootTarget = profile
+                            }
+                        },
                     )
                 }
             }
@@ -179,6 +222,7 @@ private fun ProfileCard(
     connected: Boolean,
     onConnect: () -> Unit,
     onEdit: () -> Unit,
+    onReboot: () -> Unit,
 ) {
     Card(onClick = onConnect) {
         Column(Modifier.fillMaxWidth().padding(16.dp)) {
@@ -192,7 +236,10 @@ private fun ProfileCard(
                     if (profile.username.isNotEmpty()) "（${profile.username}）" else "",
                 style = MaterialTheme.typography.bodyMedium,
             )
-            TextButton(onClick = onEdit, modifier = Modifier.align(Alignment.End)) { Text("編集") }
+            Row(modifier = Modifier.align(Alignment.End)) {
+                TextButton(onClick = onReboot) { Text("再起動") }
+                TextButton(onClick = onEdit) { Text("編集") }
+            }
         }
     }
 }
