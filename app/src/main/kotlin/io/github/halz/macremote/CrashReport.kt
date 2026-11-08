@@ -19,8 +19,6 @@ object CrashReport {
     private const val PREFS = "crash_report"
     private const val KEY_SEEN = "seen_timestamp"
     private const val LOG_LINES = 40
-    private const val TRACE_STRINGS = 400
-    private val BUILD_ID = Regex("[0-9a-f]{16,}")
 
     fun install(context: Context) {
         val file = stackFile(context)
@@ -68,9 +66,9 @@ object CrashReport {
     }
 
     /**
-     * The readable text of the native tombstone (Android 12+ hands it over as
-     * a protobuf): abort message, signal, and the frames' library and
-     * function names, in the order the record lists them.
+     * The crashing thread's backtrace from the native tombstone, which
+     * Android 12+ hands over as a protobuf (system/core/debuggerd/proto/
+     * tombstone.proto): signal, abort message, cause, then one line per frame.
      */
     private fun nativeTrace(exit: ApplicationExitInfo): String? {
         val bytes = try {
@@ -78,21 +76,75 @@ object CrashReport {
         } catch (e: Exception) {
             return null
         }
-        val strings = mutableListOf<String>()
-        val current = StringBuilder()
-        for (b in bytes) {
-            val c = b.toInt() and 0xFF
-            if (c in 0x20..0x7E) {
-                current.append(c.toChar())
-            } else {
-                val text = current.toString()
-                // Build ids are long hex runs and only add noise.
-                if (text.length >= 4 && strings.lastOrNull() != text && !BUILD_ID.matches(text)) strings += text
-                current.clear()
-            }
-            if (strings.size >= TRACE_STRINGS) break
+        return try {
+            formatTombstone(Proto(bytes).fields())
+        } catch (e: Exception) {
+            null
         }
-        return strings.joinToString("\n").takeIf { it.isNotEmpty() }
+    }
+
+    private fun formatTombstone(top: List<Proto.Field>): String {
+        val tid = top.firstOrNull { it.number == 6 }?.varint
+        val lines = mutableListOf<String>()
+        top.firstOrNull { it.number == 10 }?.message?.let { signal ->
+            lines += "signal ${signal.string(2).orEmpty()} ${signal.string(4).orEmpty()} fault=0x${(signal.varint(9) ?: 0).toString(16)}"
+        }
+        top.firstOrNull { it.number == 14 }?.text?.let { lines += "abort: $it" }
+        top.filter { it.number == 15 }.forEach { cause -> cause.message?.string(1)?.let { lines += "cause: $it" } }
+        val thread = top.filter { it.number == 16 }
+            .mapNotNull { entry -> entry.message?.fields()?.firstOrNull { it.number == 2 }?.message }
+            .firstOrNull { it.varint(1) == tid }
+        if (thread != null) {
+            lines += "thread ${thread.string(2).orEmpty()} (tid $tid)"
+            thread.fields().filter { it.number == 4 }.mapNotNull { it.message }.forEachIndexed { i, frame ->
+                val file = frame.string(6).orEmpty().substringAfterLast('/')
+                val function = frame.string(4)?.let { "$it+${frame.varint(5) ?: 0}" } ?: "?"
+                lines += "#%02d pc %08x %s %s".format(i, frame.varint(1) ?: 0, file, function)
+            }
+        }
+        return lines.joinToString("\n")
+    }
+
+    /** Just enough protobuf decoding to walk the tombstone. */
+    private class Proto(private val data: ByteArray, private val from: Int = 0, private val to: Int = data.size) {
+        class Field(val number: Int, val varint: Long?, private val bytes: ByteArray?, private val start: Int, private val end: Int) {
+            val message: Proto? get() = bytes?.let { Proto(it, start, end) }
+            val text: String? get() = bytes?.let { String(it, start, end - start) }
+        }
+
+        fun fields(): List<Field> {
+            val result = mutableListOf<Field>()
+            var pos = from
+            fun readVarint(): Long {
+                var shift = 0
+                var value = 0L
+                while (true) {
+                    val b = data[pos++].toInt()
+                    value = value or ((b and 0x7F).toLong() shl shift)
+                    if (b and 0x80 == 0) return value
+                    shift += 7
+                }
+            }
+            while (pos < to) {
+                val key = readVarint()
+                val number = (key ushr 3).toInt()
+                when ((key and 7).toInt()) {
+                    0 -> result += Field(number, readVarint(), null, 0, 0)
+                    1 -> pos += 8
+                    2 -> {
+                        val length = readVarint().toInt()
+                        result += Field(number, null, data, pos, pos + length)
+                        pos += length
+                    }
+                    5 -> pos += 4
+                    else -> return result
+                }
+            }
+            return result
+        }
+
+        fun varint(number: Int): Long? = fields().firstOrNull { it.number == number }?.varint
+        fun string(number: Int): String? = fields().firstOrNull { it.number == number }?.text
     }
 
     private fun stackFile(context: Context) = File(context.filesDir, "crash.txt")
