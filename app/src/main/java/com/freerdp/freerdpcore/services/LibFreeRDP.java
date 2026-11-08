@@ -2,7 +2,10 @@ package com.freerdp.freerdpcore.services;
 
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.system.ErrnoException;
+import android.system.Os;
 
+import java.io.File;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -36,12 +39,32 @@ public final class LibFreeRDP {
     private LibFreeRDP() {
     }
 
-    /** Loads the native library; throws if this build was made without it. */
-    public static synchronized void load() {
+    /**
+     * Loads the native library; throws if this build was made without it.
+     * FreeRDP's log is routed to {@link #logFile} so connection errors can be
+     * shown in the app; the variables must be set before the first log call,
+     * which happens while the library loads.
+     */
+    public static synchronized void load(Context context) {
         if (!loaded) {
+            File log = logFile(context);
+            if (log.length() > 1024 * 1024) log.delete();
+            try {
+                Os.setenv("WLOG_APPENDER", "FILE", true);
+                Os.setenv("WLOG_LEVEL", "INFO", true);
+                Os.setenv("WLOG_PREFIX", "[%lv] %fn: ", true);
+                Os.setenv("WLOG_FILEAPPENDER_OUTPUT_FILE_PATH", log.getParent(), true);
+                Os.setenv("WLOG_FILEAPPENDER_OUTPUT_FILE_NAME", log.getName(), true);
+            } catch (ErrnoException ignored) {
+                // Logging falls back to logcat.
+            }
             System.loadLibrary("freerdp-android");
             loaded = true;
         }
+    }
+
+    public static File logFile(Context context) {
+        return new File(context.getFilesDir(), "freerdp.log");
     }
 
     public static long newInstance(Context context, Listener listener) {

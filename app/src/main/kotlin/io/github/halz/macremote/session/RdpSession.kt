@@ -12,6 +12,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import java.io.File
+import java.io.RandomAccessFile
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
 
@@ -43,14 +45,17 @@ class RdpSession(
     private var inst = 0L
     private val freed = AtomicBoolean(false)
     private var lastButtons = 0
+    private val logFile: File = LibFreeRDP.logFile(context)
+    private val logStart = logFile.length()
 
     init {
         try {
-            LibFreeRDP.load()
+            LibFreeRDP.load(context)
             inst = LibFreeRDP.newInstance(context.applicationContext, this)
             check(inst != 0L) { "FreeRDP を初期化できませんでした" }
             check(LibFreeRDP.parseArguments(inst, arguments(password))) { "接続設定が不正です" }
             check(LibFreeRDP.connect(inst)) { "接続を開始できませんでした" }
+            watchConnectTimeout()
         } catch (e: UnsatisfiedLinkError) {
             _state.value = SessionState.Failed("この APK には RDP ライブラリが含まれていません")
         } catch (e: Exception) {
@@ -91,7 +96,8 @@ class RdpSession(
     }
 
     override fun onConnectionFailure(reason: String?) {
-        _state.value = SessionState.Failed(reason?.takeIf { it.isNotBlank() } ?: "接続できませんでした")
+        val message = reason?.takeIf { it.isNotBlank() } ?: "接続できませんでした"
+        _state.value = SessionState.Failed(withLog(message))
         releaseLater()
     }
 
@@ -187,6 +193,37 @@ class RdpSession(
         if (_state.value !is SessionState.Failed) _state.value = SessionState.Closed
     }
 
+    // FreeRDP keeps retrying some stages on its own; give up with what its log
+    // says rather than spin forever.
+    private fun watchConnectTimeout() {
+        scope.launch {
+            delay(CONNECT_TIMEOUT_MILLIS)
+            if (_state.value != SessionState.Connecting) return@launch
+            _state.value = SessionState.Failed(
+                withLog("${CONNECT_TIMEOUT_MILLIS / 1000} 秒以内に接続できませんでした。Windows のファイアウォールで Tailscale からの 3389 番が許可されているか確認してください")
+            )
+            if (!freed.get()) LibFreeRDP.disconnect(inst)
+        }
+    }
+
+    /** Appends this session's warnings and errors from FreeRDP's log. */
+    private fun withLog(message: String): String {
+        val lines = try {
+            RandomAccessFile(logFile, "r").use { file ->
+                if (file.length() <= logStart) return message
+                file.seek(logStart)
+                val bytes = ByteArray((file.length() - logStart).coerceAtMost(256 * 1024).toInt())
+                file.readFully(bytes)
+                String(bytes).lines()
+            }
+        } catch (e: Exception) {
+            return message
+        }
+        val problems = lines.filter { "[WARN]" in it || "[ERROR]" in it || "[FATAL]" in it }
+            .takeLast(LOG_LINES)
+        return if (problems.isEmpty()) message else message + "\n\n" + problems.joinToString("\n")
+    }
+
     private fun unicode(keysym: Int) {
         val codePoint = if (keysym >= UNICODE_KEYSYM_OFFSET) keysym - UNICODE_KEYSYM_OFFSET else keysym
         text(String(Character.toChars(codePoint)))
@@ -226,6 +263,8 @@ class RdpSession(
     private companion object {
         const val DESKTOP_WIDTH = 1920
         const val DESKTOP_HEIGHT = 1080
+        const val CONNECT_TIMEOUT_MILLIS = 40_000L
+        const val LOG_LINES = 8
 
         const val PTR_FLAGS_WHEEL = 0x0200
         const val PTR_FLAGS_WHEEL_NEGATIVE = 0x0100

@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -46,6 +48,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import io.github.halz.macremote.data.AppSettings
@@ -547,11 +550,19 @@ private fun ModifierChip(
 @Composable
 private fun ErrorPane(message: String, onRetry: (() -> Unit)?, onExit: () -> Unit) {
     Column(
-        Modifier.fillMaxSize().navigationBarsPadding().padding(32.dp),
+        Modifier.fillMaxSize().navigationBarsPadding().verticalScroll(rememberScrollState()).padding(32.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(message, color = Color.White, style = MaterialTheme.typography.titleMedium)
+        // An RDP failure may carry FreeRDP's log lines after a blank line.
+        val title = message.substringBefore("\n\n")
+        val detail = message.substringAfter("\n\n", "")
+        Text(title, color = Color.White, style = MaterialTheme.typography.titleMedium)
+        if (detail.isNotEmpty()) {
+            SelectionContainer {
+                Text(detail, color = Color.LightGray, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+            }
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             if (onRetry != null) Button(onClick = onRetry) { Text("再接続") }
             TextButton(onClick = onExit) { Text("一覧へ戻る") }
