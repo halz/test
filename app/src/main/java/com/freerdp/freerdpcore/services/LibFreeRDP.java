@@ -58,6 +58,12 @@ public final class LibFreeRDP {
             } catch (ErrnoException ignored) {
                 // Logging falls back to logcat.
             }
+            // Each library is loaded explicitly, dependencies first: WinPR's
+            // JNI_OnLoad stores the JavaVM its UTF-8/UTF-16 conversion calls
+            // back into, and it only runs for libraries loaded from Java.
+            System.loadLibrary("winpr3");
+            System.loadLibrary("freerdp3");
+            System.loadLibrary("freerdp-client3");
             System.loadLibrary("freerdp-android");
             loaded = true;
         }
