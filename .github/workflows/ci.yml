@@ -49,6 +49,12 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build pkg-config
           tools/build-freerdp-android.sh
+      # FreeRDP and OpenSSL ship with symbols (~50 MB); stripping is
+      # idempotent, so it also applies to libraries restored from the cache.
+      - name: Strip native libraries
+        run: |
+          STRIP="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
+          find app/src/main/jniLibs -name '*.so' -exec "$STRIP" --strip-unneeded {} +
       - name: Assemble debug APK
         run: ./gradlew :app:assembleDebug --console=plain
       - uses: actions/upload-artifact@v4
