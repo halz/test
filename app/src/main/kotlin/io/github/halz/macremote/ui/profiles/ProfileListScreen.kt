@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import io.github.halz.macremote.data.Profile
 import io.github.halz.macremote.data.ProfileRepository
 import io.github.halz.macremote.data.ProfileTransfer
+import io.github.halz.macremote.data.Protocol
 import io.github.halz.macremote.data.RemoteReboot
 import io.github.halz.macremote.data.SecretStore
 import io.github.halz.macremote.session.SessionHolder
@@ -78,8 +79,11 @@ fun ProfileListScreen(
             title = { Text("${target.name.ifEmpty { target.host }} を強制再起動") },
             text = {
                 Text(
-                    "Mac を今すぐ再起動します。保存していない作業は失われます。\n\n" +
-                        "Mac 側で「リモートログイン」が有効で、このアカウントが管理者である必要があります。"
+                    "今すぐ再起動します。保存していない作業は失われます。\n\n" +
+                        when (target.protocol) {
+                            Protocol.VNC -> "Mac 側で「リモートログイン」が有効で、"
+                            Protocol.RDP -> "Windows 側で「OpenSSH サーバー」が有効で、"
+                        } + "このアカウントが管理者である必要があります。"
                 )
             },
             confirmButton = {
@@ -88,7 +92,7 @@ fun ProfileListScreen(
                     scope.launch {
                         runCatching {
                             val password = secretStore.loadPassword(target.id).orEmpty()
-                            RemoteReboot.reboot(target.host, target.username, password)
+                            RemoteReboot.reboot(target, password)
                         }.onSuccess {
                             // The Mac is going down; drop the live session cleanly.
                             sessionHolder.close(target.id)
@@ -232,7 +236,7 @@ private fun ProfileCard(
                 color = if (connected) MaterialTheme.colorScheme.primary else Color.Unspecified,
             )
             Text(
-                "${profile.host}:${profile.port}" +
+                "${profile.protocol.label}　${profile.host}:${profile.port}" +
                     if (profile.username.isNotEmpty()) "（${profile.username}）" else "",
                 style = MaterialTheme.typography.bodyMedium,
             )

@@ -1,5 +1,6 @@
 package io.github.halz.macremote.ui.session
 
+import android.widget.Toast
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -43,6 +44,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -50,13 +52,16 @@ import io.github.halz.macremote.data.AppSettings
 import io.github.halz.macremote.data.DisplayScale
 import io.github.halz.macremote.data.GestureAction
 import io.github.halz.macremote.data.GestureTrigger
+import io.github.halz.macremote.data.MacDisplay
+import io.github.halz.macremote.data.Profile
 import io.github.halz.macremote.data.ProfileRepository
+import io.github.halz.macremote.data.Protocol
 import io.github.halz.macremote.data.SecretStore
 import io.github.halz.macremote.rfb.keysym.Keysyms
 import io.github.halz.macremote.rfb.messages.PointerButtons
 import io.github.halz.macremote.session.SessionHolder
 import io.github.halz.macremote.session.SessionState
-import io.github.halz.macremote.session.VncSession
+import io.github.halz.macremote.session.RemoteSession
 import kotlinx.coroutines.launch
 import kotlin.math.floor
 
@@ -122,6 +127,25 @@ fun SessionScreen(
     val currentSession = sessions.find { it.profile.id == currentId }
     val state = currentSession?.state?.collectAsState()?.value
 
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    // Resolution changes go over SSH, which needs the Mac account (ARD login).
+    fun macDisplayAction(
+        profile: Profile,
+        done: String,
+        action: suspend (Profile, String) -> Unit,
+    ): (() -> Unit)? {
+        if (profile.protocol != Protocol.VNC || profile.username.isEmpty()) return null
+        return {
+            scope.launch {
+                runCatching { action(profile, secretStore.loadPassword(profile.id).orEmpty()) }
+                    .onSuccess { Toast.makeText(context, done, Toast.LENGTH_SHORT).show() }
+                    .onFailure { Toast.makeText(context, "解像度の変更に失敗: ${it.message}", Toast.LENGTH_LONG).show() }
+            }
+        }
+    }
+
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         when {
             startFailed != null -> ErrorPane(startFailed!!, onRetry = null, onExit = onExit)
@@ -144,6 +168,17 @@ fun SessionScreen(
                 onOpenFiles = { onOpenFiles(currentId) },
                 onBackToList = onExit,
                 onDisconnect = { closeTab(currentId) },
+                onMacFullHd = macDisplayAction(currentSession.profile, "Full HD に変更しました") { profile, password ->
+                    val restore = MacDisplay.setFullHd(profile.host, profile.username, password)
+                    // Keep the very first original: a second Full HD switch must not
+                    // overwrite it with the Full HD setup itself.
+                    if (settings.displayRestore(profile.id) == null) settings.setDisplayRestore(profile.id, restore)
+                },
+                onMacRestoreResolution = macDisplayAction(currentSession.profile, "元の解像度に戻しました") { profile, password ->
+                    val restore = settings.displayRestore(profile.id) ?: error("元の解像度が記録されていません")
+                    MacDisplay.restore(profile.host, profile.username, password, restore)
+                    settings.setDisplayRestore(profile.id, null)
+                },
             )
         }
 
@@ -163,7 +198,7 @@ fun SessionScreen(
 
 @Composable
 private fun SessionTabs(
-    sessions: List<VncSession>,
+    sessions: List<RemoteSession>,
     currentId: String,
     onSelect: (String) -> Unit,
     onCloseTab: (String) -> Unit,
@@ -196,11 +231,13 @@ private fun SessionTabs(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ConnectedContent(
-    session: VncSession,
+    session: RemoteSession,
     settings: AppSettings,
     onOpenFiles: () -> Unit,
     onBackToList: () -> Unit,
     onDisconnect: () -> Unit,
+    onMacFullHd: (() -> Unit)?,
+    onMacRestoreResolution: (() -> Unit)?,
 ) {
     val scope = rememberCoroutineScope()
     val transform = remember(session) { CanvasTransform() }
@@ -226,14 +263,14 @@ private fun ConnectedContent(
     }
 
     val frameState = session.frame.collectAsState()
-    val fb = session.client.framebuffer
+    val fb = session.display
     val clipboard = LocalClipboardManager.current
 
     // Cursor indicator / trackpad cursor, in SERVER coordinates.
     var cursorServer by remember(session) { mutableStateOf(Offset(fb.width / 2f, fb.height / 2f)) }
     var viewSizeState by remember { mutableStateOf(IntSize.Zero) }
 
-    fun divisor(): Int = session.framebufferBitmap.divisor
+    fun divisor(): Int = session.display.divisor
 
     // Pick the downsampling factor for the screen currently in use. AUTO keys
     // off the live view size, so folding/unfolding re-optimizes automatically.
@@ -250,7 +287,7 @@ private fun ConnectedContent(
     // state must not be written while drawing.
     LaunchedEffect(session) {
         session.frame.collect {
-            val bitmap = session.framebufferBitmap.bitmap
+            val bitmap = session.display.bitmap
             val remoteSize = IntSize(bitmap.width, bitmap.height)
             if (transform.remoteSize != remoteSize) {
                 transform.remoteSize = remoteSize
@@ -322,23 +359,11 @@ private fun ConnectedContent(
     // remembered), so multi-touch detection is never restarted mid-gesture.
     val onGesture: (GestureTrigger, Offset) -> Unit = remember(session, transform, pointerTarget) {
         { trigger: GestureTrigger, viewPosition: Offset ->
-            when (gesturesState.value[trigger] ?: trigger.default) {
-                GestureAction.NONE -> Unit
-                GestureAction.MISSION_CONTROL -> session.keyPress(Keysyms.UP, listOf(Keysyms.CONTROL_L))
-                GestureAction.APP_EXPOSE -> session.keyPress(Keysyms.DOWN, listOf(Keysyms.CONTROL_L))
-                GestureAction.SPACE_LEFT -> session.keyPress(Keysyms.LEFT, listOf(Keysyms.CONTROL_L))
-                GestureAction.SPACE_RIGHT -> session.keyPress(Keysyms.RIGHT, listOf(Keysyms.CONTROL_L))
-                GestureAction.SHOW_DESKTOP -> session.keyPress(Keysyms.F11)
-                GestureAction.APP_SWITCHER -> session.keyPress(Keysyms.TAB, listOf(Keysyms.SUPER_L))
-                GestureAction.SPOTLIGHT -> session.keyPress(' '.code, listOf(Keysyms.SUPER_L))
-                GestureAction.COPY -> session.keyPress('c'.code, listOf(Keysyms.SUPER_L))
-                GestureAction.PASTE_REMOTE -> session.keyPress('v'.code, listOf(Keysyms.SUPER_L))
-                GestureAction.SCREENSHOT ->
-                    session.keyPress('4'.code, listOf(Keysyms.SUPER_L, Keysyms.SHIFT_L))
-                GestureAction.BACK -> session.keyPress('['.code, listOf(Keysyms.SUPER_L))
-                GestureAction.FORWARD -> session.keyPress(']'.code, listOf(Keysyms.SUPER_L))
-                GestureAction.MINIMIZE -> session.keyPress('m'.code, listOf(Keysyms.SUPER_L))
-                GestureAction.CLOSE_WINDOW -> session.keyPress('w'.code, listOf(Keysyms.SUPER_L))
+            val action = gesturesState.value[trigger] ?: trigger.default
+            val shortcut = shortcutFor(action, windows = session.profile.protocol == Protocol.RDP)
+            if (shortcut != null) {
+                session.keyPress(shortcut.first, shortcut.second)
+            } else when (action) {
                 GestureAction.RIGHT_CLICK -> {
                     val p = if (trackpadState.value) pointerTarget.cursor()
                     else pointerTarget.resolveDirect(viewPosition)
@@ -347,11 +372,13 @@ private fun ConnectedContent(
                     pointerTarget.send(0, p)
                 }
                 GestureAction.TOGGLE_KEYBOARD -> { keyboardActive = !keyboardActive }
-                GestureAction.TOGGLE_TRACKPAD ->
+                GestureAction.TOGGLE_TRACKPAD -> {
                     scope.launch { settings.setTrackpadMode(!trackpadState.value) }
-                GestureAction.PASTE_FROM_ANDROID -> clipboard.getText()?.text?.let { session.paste(it) }
+                }
+                GestureAction.PASTE_FROM_ANDROID -> { clipboard.getText()?.text?.let { session.paste(it) } }
                 GestureAction.FIT -> transform.fit()
                 GestureAction.FILL -> transform.fill()
+                else -> Unit
             }
         }
     }
@@ -365,7 +392,7 @@ private fun ConnectedContent(
                 .onSizeChanged { size ->
                     viewSizeState = size
                     transform.viewSize = size
-                    val bitmap = session.framebufferBitmap.bitmap
+                    val bitmap = session.display.bitmap
                     transform.remoteSize = IntSize(bitmap.width, bitmap.height)
                     if (transform.userZoomed) transform.clampOffset() else transform.fit()
                 }
@@ -376,10 +403,10 @@ private fun ConnectedContent(
                 translate(transform.offsetX, transform.offsetY)
                 scale(transform.scale, transform.scale, pivot = Offset.Zero)
             }) {
-                drawImage(session.framebufferBitmap.bitmap.asImageBitmap())
+                drawImage(session.display.bitmap.asImageBitmap())
                 // macOS often doesn't paint the cursor into the framebuffer, so
                 // mark the pointer position locally (ring; filled dot in trackpad mode).
-                val d = session.framebufferBitmap.divisor
+                val d = session.display.divisor
                 val p = Offset(cursorServer.x / d, cursorServer.y / d)
                 if (trackpad) {
                     drawCircle(color = Color(0xCC000000), radius = 5f / transform.scale, center = p)
@@ -447,6 +474,16 @@ private fun ConnectedContent(
                                             scaleMenuOpen = false
                                             scope.launch { settings.setDisplayScale(option) }
                                         },
+                                    )
+                                }
+                                if (onMacFullHd != null && onMacRestoreResolution != null) {
+                                    DropdownMenuItem(
+                                        text = { Text("Mac を Full HD に変更") },
+                                        onClick = { scaleMenuOpen = false; onMacFullHd() },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Mac の解像度を元に戻す") },
+                                        onClick = { scaleMenuOpen = false; onMacRestoreResolution() },
                                     )
                                 }
                             }
@@ -518,6 +555,55 @@ private fun ErrorPane(message: String, onRetry: (() -> Unit)?, onExit: () -> Uni
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             if (onRetry != null) Button(onClick = onRetry) { Text("再接続") }
             TextButton(onClick = onExit) { Text("一覧へ戻る") }
+        }
+    }
+}
+
+/**
+ * The keyboard shortcut a gesture command sends, or null for commands that
+ * are not shortcuts. Windows gets the closest native equivalent of each
+ * macOS action (Task View for Mission Control, Ctrl in place of Command).
+ */
+private fun shortcutFor(action: GestureAction, windows: Boolean): Pair<Int, List<Int>>? {
+    val command = Keysyms.SUPER_L // Command on the Mac, the Windows key on Windows
+    val ctrl = Keysyms.CONTROL_L
+    val alt = Keysyms.ALT_L
+    val shift = Keysyms.SHIFT_L
+    return if (windows) {
+        when (action) {
+            GestureAction.MISSION_CONTROL -> Keysyms.TAB to listOf(command)
+            GestureAction.APP_EXPOSE -> Keysyms.TAB to listOf(ctrl, alt)
+            GestureAction.SPACE_LEFT -> Keysyms.LEFT to listOf(ctrl, command)
+            GestureAction.SPACE_RIGHT -> Keysyms.RIGHT to listOf(ctrl, command)
+            GestureAction.SHOW_DESKTOP -> 'd'.code to listOf(command)
+            GestureAction.APP_SWITCHER -> Keysyms.TAB to listOf(alt)
+            GestureAction.SPOTLIGHT -> 's'.code to listOf(command)
+            GestureAction.COPY -> 'c'.code to listOf(ctrl)
+            GestureAction.PASTE_REMOTE -> 'v'.code to listOf(ctrl)
+            GestureAction.SCREENSHOT -> 's'.code to listOf(command, shift)
+            GestureAction.BACK -> Keysyms.LEFT to listOf(alt)
+            GestureAction.FORWARD -> Keysyms.RIGHT to listOf(alt)
+            GestureAction.MINIMIZE -> Keysyms.DOWN to listOf(command)
+            GestureAction.CLOSE_WINDOW -> 'w'.code to listOf(ctrl)
+            else -> null
+        }
+    } else {
+        when (action) {
+            GestureAction.MISSION_CONTROL -> Keysyms.UP to listOf(ctrl)
+            GestureAction.APP_EXPOSE -> Keysyms.DOWN to listOf(ctrl)
+            GestureAction.SPACE_LEFT -> Keysyms.LEFT to listOf(ctrl)
+            GestureAction.SPACE_RIGHT -> Keysyms.RIGHT to listOf(ctrl)
+            GestureAction.SHOW_DESKTOP -> Keysyms.F11 to emptyList()
+            GestureAction.APP_SWITCHER -> Keysyms.TAB to listOf(command)
+            GestureAction.SPOTLIGHT -> ' '.code to listOf(command)
+            GestureAction.COPY -> 'c'.code to listOf(command)
+            GestureAction.PASTE_REMOTE -> 'v'.code to listOf(command)
+            GestureAction.SCREENSHOT -> '4'.code to listOf(command, shift)
+            GestureAction.BACK -> '['.code to listOf(command)
+            GestureAction.FORWARD -> ']'.code to listOf(command)
+            GestureAction.MINIMIZE -> 'm'.code to listOf(command)
+            GestureAction.CLOSE_WINDOW -> 'w'.code to listOf(command)
+            else -> null
         }
     }
 }

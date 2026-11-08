@@ -11,6 +11,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -30,6 +31,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import io.github.halz.macremote.data.Profile
 import io.github.halz.macremote.data.ProfileRepository
+import io.github.halz.macremote.data.Protocol
 import io.github.halz.macremote.data.SecretStore
 import kotlinx.coroutines.launch
 import java.util.UUID
@@ -48,6 +50,7 @@ fun ProfileEditScreen(
     var port by remember { mutableStateOf("5900") }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var protocol by remember { mutableStateOf(Protocol.VNC) }
     var loaded by remember { mutableStateOf(profileId == null) }
 
     LaunchedEffect(profileId) {
@@ -57,6 +60,7 @@ fun ProfileEditScreen(
                 host = existing.host
                 port = existing.port.toString()
                 username = existing.username
+                protocol = existing.protocol
                 password = secretStore.loadPassword(profileId).orEmpty()
             }
             loaded = true
@@ -76,6 +80,19 @@ fun ProfileEditScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             val fieldModifier = Modifier.widthIn(max = 480.dp).fillMaxWidth()
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Protocol.entries.forEach { option ->
+                    FilterChip(
+                        selected = protocol == option,
+                        onClick = {
+                            // Follow the default port unless the user typed a custom one.
+                            if (port == protocol.defaultPort.toString()) port = option.defaultPort.toString()
+                            protocol = option
+                        },
+                        label = { Text(option.label) },
+                    )
+                }
+            }
             OutlinedTextField(name, { name = it }, fieldModifier, label = { Text("名前") }, singleLine = true)
             OutlinedTextField(
                 host, { host = it }, fieldModifier,
@@ -88,7 +105,15 @@ fun ProfileEditScreen(
             )
             OutlinedTextField(
                 username, { username = it }, fieldModifier,
-                label = { Text("ユーザ名 (Macログインで入る場合)") }, singleLine = true,
+                label = {
+                    Text(
+                        when (protocol) {
+                            Protocol.VNC -> "ユーザ名 (Macログインで入る場合)"
+                            Protocol.RDP -> "ユーザ名 (Windows アカウント)"
+                        }
+                    )
+                },
+                singleLine = true,
             )
             OutlinedTextField(
                 password, { password = it }, fieldModifier,
@@ -118,8 +143,9 @@ fun ProfileEditScreen(
                                     id = id,
                                     name = name.trim(),
                                     host = host.trim(),
-                                    port = port.toIntOrNull() ?: 5900,
+                                    port = port.toIntOrNull() ?: protocol.defaultPort,
                                     username = username.trim(),
+                                    protocol = protocol,
                                 )
                             )
                             secretStore.savePassword(id, password)

@@ -17,13 +17,16 @@ import kotlin.math.min
  * a moment, which is the usual trade-off VNC viewers make to keep copies off
  * the main thread.
  */
-class FramebufferBitmap(private val framebuffer: Framebuffer) {
+class FramebufferBitmap(private val framebuffer: Framebuffer) : RemoteDisplay {
 
-    var divisor: Int = 1
+    override var divisor: Int = 1
         private set
 
-    var bitmap: Bitmap = create()
+    override var bitmap: Bitmap = create()
         private set
+
+    override val width: Int get() = framebuffer.width
+    override val height: Int get() = framebuffer.height
 
     private var scaledBuffer = IntArray(0)
 

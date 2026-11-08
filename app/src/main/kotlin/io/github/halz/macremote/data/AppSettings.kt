@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 /** How the received framebuffer is scaled for display. */
@@ -54,6 +55,21 @@ class AppSettings(private val dataStore: DataStore<Preferences>) {
 
     suspend fun setIdleTimeout(value: IdleTimeout) {
         dataStore.edit { it[idleTimeoutKey] = value.name }
+    }
+
+    private fun displayRestoreKey(profileId: String) = stringPreferencesKey("display_restore_$profileId")
+
+    /** The command that puts a Mac's displays back as they were before switching to Full HD. */
+    suspend fun displayRestore(profileId: String): String? = dataStore.data.first()[displayRestoreKey(profileId)]
+
+    suspend fun setDisplayRestore(profileId: String, command: String?) {
+        dataStore.edit { prefs ->
+            if (command == null) {
+                prefs.remove(displayRestoreKey(profileId))
+            } else {
+                prefs[displayRestoreKey(profileId)] = command
+            }
+        }
     }
 
     private fun gestureKey(trigger: GestureTrigger) = stringPreferencesKey("gesture_${trigger.name}")

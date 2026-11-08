@@ -11,7 +11,8 @@ android {
 
     defaultConfig {
         applicationId = "io.github.halz.macremote"
-        minSdk = 26
+        // The FreeRDP native libraries (RDP) are built for API 29.
+        minSdk = 29
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"

@@ -35,6 +35,20 @@ jobs:
           distribution: temurin
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v4
+      # The RDP (FreeRDP + OpenSSL) native libraries take ~15 min to build, so
+      # they are rebuilt only when the build script (and its pinned revision)
+      # changes.
+      - name: Restore FreeRDP native libraries
+        id: freerdp-cache
+        uses: actions/cache@v4
+        with:
+          path: app/src/main/jniLibs
+          key: freerdp-android-${{ hashFiles('tools/build-freerdp-android.sh') }}
+      - name: Build FreeRDP native libraries
+        if: steps.freerdp-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build pkg-config
+          tools/build-freerdp-android.sh
       - name: Assemble debug APK
         run: ./gradlew :app:assembleDebug --console=plain
       - uses: actions/upload-artifact@v4

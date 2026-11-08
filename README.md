@@ -1,13 +1,13 @@
-# Mac Remote — Android から Mac の画面共有に接続する VNC クライアント
+# Mac Remote — Android から Mac / Windows に接続するリモートデスクトップクライアント
 
-iOS の「Screens」のように、Android 端末から Mac の「画面共有」へインターネット経由で接続するアプリです。接続経路には [Tailscale](https://tailscale.com) を使い、どこからでも自宅・職場の Mac に安全に届きます。Galaxy Z Fold 8 のカバースクリーン / メインスクリーンの両方に対応したレスポンシブ UI です。
+iOS の「Screens」のように、Android 端末から Mac の「画面共有」(VNC) や Windows の「リモートデスクトップ」(RDP) へインターネット経由で接続するアプリです。接続経路には [Tailscale](https://tailscale.com) を使い、どこからでも自宅・職場の Mac に安全に届きます。Galaxy Z Fold 8 のカバースクリーン / メインスクリーンの両方に対応したレスポンシブ UI です。
 
 ## 構成
 
 | モジュール | 内容 |
 |---|---|
 | `:rfb` | 純 Kotlin/JVM の RFB (VNC) プロトコル実装。Android 非依存で、JVM 単体でテスト可能 |
-| `:app` | Jetpack Compose の Android アプリ本体 |
+| `:app` | Jetpack Compose の Android アプリ本体。RDP は [FreeRDP](https://github.com/FreeRDP/FreeRDP) (Apache 2.0) のネイティブライブラリを組み込んで使用 |
 
 `:app` は Android SDK がある環境でのみ Gradle に include されます (`settings.gradle.kts`)。SDK のない CI コンテナでも `gradle :rfb:test` が動きます。
 
@@ -35,6 +35,18 @@ iOS の「Screens」のように、Android 端末から Mac の「画面共有�
    - ポート: `5900` (既定)
    - ユーザ名: Mac ログインで入るなら Mac のアカウント名。VNC パスワード方式なら空欄
    - パスワード: 上で選んだ方式のパスワード (Android Keystore で暗号化して保存されます)
+
+## Windows 側の準備 (リモートデスクトップ)
+
+1. Windows 10/11 の **Pro 以上**であること (Home はリモートデスクトップの受け側になれません)
+2. **設定 → システム → リモートデスクトップ** をオンにする
+3. Windows に Tailscale をインストールしてログインする
+4. アプリの「＋」で種別「**Windows (リモートデスクトップ)**」を選び、ホスト・ポート (`3389`)・ユーザ名・パスワードを登録する
+   - ユーザ名: Microsoft アカウントならメールアドレス、ローカルアカウントならアカウント名、ドメインなら `DOMAIN\user`
+
+接続すると Windows 側の画面は **Full HD (1920x1080)** で開かれ、手元の画面解像度に関係なくモバイルで見やすいサイズになります。日本語を含む文字入力・クリップボード共有 (双方向・Unicode) に対応します。
+
+再起動・ファイル転送は SSH を使うため、使う場合は Windows の「設定 → システム → オプション機能」で **OpenSSH サーバー**を追加し、サービス `sshd` を開始してください。
 
 ## 操作方法
 
@@ -65,6 +77,8 @@ iOS の「Screens」のように、Android 端末から Mac の「画面共有�
 | 4 本指 下スワイプ | デスクトップを表示 |
 | 4 本指タップ | Spotlight |
 | 4 本指 上/左/右スワイプ | 未割り当て |
+
+Windows に接続中は各コマンドが Windows の相当操作になります (Mission Control → タスクビュー `Win+Tab`、デスクトップ切替 → `Ctrl+Win+←/→`、デスクトップを表示 → `Win+D`、Spotlight → 検索 `Win+S`、⌘ のショートカット → `Ctrl` など)。
 
 割り当ては接続先一覧の「⋮ → 設定」で変更できます。選べるコマンドは Mission Control・Exposé・デスクトップ切替・アプリ切替 (⌘Tab)・Spotlight・コピー/ペースト・スクリーンショット・戻る/進む・ウィンドウ操作・右クリックのほか、アプリ側の操作 (キーボード表示、トラックパッドモード、Android から貼り付け、全体/フィル表示) です。「なし」を選ぶとそのジェスチャは無効になります。「既定に戻す」で全て初期値へ戻せます。
 
@@ -117,16 +131,27 @@ Retina Mac のフル解像度 (例 2880x1800) をそのまま扱うとメモリ�
 - **自動 (既定)**: いま使っている画面 (Z Fold のカバー / メイン) のサイズに合わせて最適な間引き率を自動選択。折りたたみ状態を切り替えると自動で再計算されます
 - **フル / 1/2 / 1/3**: 手動で固定
 
-※ Mac 本体の画面解像度そのものは VNC プロトコルからは変更できません (macOS が対応していないため)。この設定は端末側の表示・処理の最適化です。
+※ この設定は端末側の表示・処理の最適化です。Mac 本体の解像度は VNC プロトコルからは変更できないため、下記の SSH 経由の方法を使います。
+
+### Mac 本体を Full HD にする
+
+ツールバーの「解像度」→「**Mac を Full HD に変更**」で、Mac のメインディスプレイを 1920x1080 (なければ最も近い解像度) に切り替えます。Mac の文字や UI が大きくなりモバイルから見やすくなるうえ、転送量も減ります。「**Mac の解像度を元に戻す**」で切り替え前の構成に戻せます。
+
+- Mac 側で無料ツール [displayplacer](https://github.com/jakehilborn/displayplacer) を一度インストールしてください: ターミナルで `brew install displayplacer`
+- 「リモートログイン」が有効で、プロファイルにユーザ名が入っている必要があります (SSH で実行するため)
+- Windows (RDP) は接続時に自動で Full HD になるため、この操作は不要です
 
 ## ビルド
 
 Android Studio でそのまま開くか:
 
 ```bash
+tools/build-freerdp-android.sh   # RDP 用ネイティブライブラリ (要 Android NDK, cmake, ninja, perl)
 ./gradlew :app:assembleDebug     # 要 Android SDK
 ./gradlew :rfb:test              # プロトコル層のテスト (SDK 不要)
 ```
+
+ネイティブライブラリ (FreeRDP + OpenSSL) は `app/src/main/jniLibs/` に出力されます。CI はこれをキャッシュし、ビルドスクリプトが変わったときだけ再ビルドします (初回は 15 分程度)。ライブラリなしでビルドした APK でも Mac (VNC) 接続は動作し、Windows 接続時のみエラーになります。
 
 `:rfb` の統合テストは `x11vnc` / `Xvfb` / `xdotool` があれば実サーバに接続して検証し、なければ自動でスキップします。
 
@@ -134,5 +159,7 @@ Android Studio でそのまま開くか:
 
 - 日本語入力は Android 側 IME で確定した文字を Unicode keysym として送るベストエフォート方式です。Mac 側アプリによっては取りこぼしがあります
 - macOS はカーソルを画面に描画しないことがあるため、最後にタップした位置をローカルのリングで表示しています (Cursor 擬似エンコーディングは未対応)
+- RDP は Windows の自己署名証明書を検証せずに受け入れます。SFTP/SSH と同様に Tailscale トンネル内での使用が前提です
+- RDP の音声転送には対応していません
 - ARD 認証の DH 512bit + MD5 は Apple 側仕様であり暗号強度は弱いため、**Tailscale トンネル内での使用を前提**としています。画面共有ポートをインターネットに直接公開しないでください
 - フォアグラウンドサービスで接続を維持しますが、メーカー独自の強力な電池管理では稀に切断されることがあります (再接続ボタンでワンタップ復帰)

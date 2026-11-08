@@ -2,6 +2,7 @@ package io.github.halz.macremote.session
 
 import android.content.Context
 import io.github.halz.macremote.data.Profile
+import io.github.halz.macremote.data.Protocol
 import io.github.halz.macremote.rfb.RfbAuthException
 import io.github.halz.macremote.rfb.client.RfbClient
 import io.github.halz.macremote.rfb.client.RfbEvent
@@ -29,24 +30,24 @@ sealed class SessionState {
  * survives Activity re-creation when the Fold is opened or closed.
  */
 class VncSession(
-    val profile: Profile,
+    override val profile: Profile,
     password: String,
     scope: CoroutineScope,
-) {
+) : RemoteSession {
     val client = RfbClient(profile.host, profile.port, profile.username, password)
 
     private val _state = MutableStateFlow<SessionState>(SessionState.Connecting)
-    val state: StateFlow<SessionState> = _state
+    override val state: StateFlow<SessionState> = _state
 
-    /** Bumped after every applied framebuffer update; the canvas redraws on change. */
     private val _frame = MutableStateFlow(0L)
-    val frame: StateFlow<Long> = _frame
+    override val frame: StateFlow<Long> = _frame
 
-    /** Latest text the Mac put on its clipboard (ServerCutText, Latin-1 only). */
+    /** ServerCutText is Latin-1 only. */
     private val _serverClipboard = MutableStateFlow<String?>(null)
-    val serverClipboard: StateFlow<String?> = _serverClipboard
+    override val serverClipboard: StateFlow<String?> = _serverClipboard
 
-    val framebufferBitmap = FramebufferBitmap(client.framebuffer)
+    private val framebufferBitmap = FramebufferBitmap(client.framebuffer)
+    override val display: RemoteDisplay get() = framebufferBitmap
 
     // Input events must reach the wire in the order the UI produced them;
     // a single consumer coroutine guarantees that without blocking the UI.
@@ -57,7 +58,7 @@ class VncSession(
         }
     }
 
-    fun pointer(buttonMask: Int, x: Int, y: Int) {
+    override fun pointer(buttonMask: Int, x: Int, y: Int) {
         inputQueue.trySend { client.sendPointer(buttonMask, x, y) }
     }
 
@@ -65,7 +66,7 @@ class VncSession(
         inputQueue.trySend { client.sendKey(keysym, down) }
     }
 
-    fun keyPress(keysym: Int, modifiers: List<Int> = emptyList()) {
+    override fun keyPress(keysym: Int, modifiers: List<Int>) {
         inputQueue.trySend {
             modifiers.forEach { client.sendKey(it, true) }
             client.sendKey(keysym, true)
@@ -74,7 +75,7 @@ class VncSession(
         }
     }
 
-    fun text(value: String) {
+    override fun text(value: String) {
         inputQueue.trySend { client.sendText(value) }
     }
 
@@ -83,7 +84,7 @@ class VncSession(
      * anything else (Japanese etc.) is typed out as Unicode key events, since
      * the RFB cut-text message is Latin-1 only.
      */
-    fun paste(value: String) {
+    override fun paste(value: String) {
         if (value.isEmpty()) return
         val isLatin1 = value.all { it.code in 0..0xFF }
         if (isLatin1) {
@@ -99,8 +100,7 @@ class VncSession(
         }
     }
 
-    /** Downsampling factor for the display bitmap (1 = full resolution). */
-    fun setDisplayDivisor(value: Int) {
+    override fun setDisplayDivisor(value: Int) {
         inputQueue.trySend {
             framebufferBitmap.setDivisor(value)
             _frame.value++
@@ -145,7 +145,7 @@ class VncSession(
         }
     }
 
-    fun close() {
+    override fun close() {
         inputQueue.close()
         inputJob.cancel()
         client.close()
@@ -164,22 +164,26 @@ class VncSession(
  */
 class SessionHolder(private val appScope: CoroutineScope, private val context: Context) {
 
-    private val _sessions = MutableStateFlow<List<VncSession>>(emptyList())
-    val sessions: StateFlow<List<VncSession>> = _sessions
+    private val _sessions = MutableStateFlow<List<RemoteSession>>(emptyList())
+    val sessions: StateFlow<List<RemoteSession>> = _sessions
 
-    fun start(profile: Profile, password: String): VncSession {
+    fun start(profile: Profile, password: String): RemoteSession {
         _sessions.value.find { it.profile.id == profile.id }?.let { existing ->
             existing.close()
             _sessions.value = _sessions.value - existing
         }
-        return VncSession(profile, password, appScope).also {
+        val session = when (profile.protocol) {
+            Protocol.VNC -> VncSession(profile, password, appScope)
+            Protocol.RDP -> RdpSession(profile, password, context, appScope)
+        }
+        return session.also {
             _sessions.value = _sessions.value + it
             // Keep the process alive in the background while anything is connected.
             SessionService.start(context)
         }
     }
 
-    fun sessionFor(profileId: String): VncSession? =
+    fun sessionFor(profileId: String): RemoteSession? =
         _sessions.value.find { it.profile.id == profileId }
 
     fun close(profileId: String) {

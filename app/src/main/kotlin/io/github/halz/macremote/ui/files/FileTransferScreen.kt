@@ -40,6 +40,7 @@ import com.jcraft.jsch.ChannelSftp
 import com.jcraft.jsch.JSch
 import com.jcraft.jsch.Session
 import io.github.halz.macremote.data.ProfileRepository
+import io.github.halz.macremote.data.Protocol
 import io.github.halz.macremote.data.SecretStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -103,11 +104,16 @@ fun FileTransferScreen(
         // if this effect is cancelled mid-connect, withContext discards its
         // result while throwing, and only this reference can clean it up.
         var pending: Pair<Session, ChannelSftp>? = null
+        var sshHint = "Mac の「システム設定 → 一般 → 共有 → リモートログイン」がオンか確認してください"
         try {
             val profile = repository.find(profileId) ?: error("接続先が見つかりません")
+            if (profile.protocol == Protocol.RDP) {
+                sshHint = "Windows の「設定 → システム → オプション機能」で OpenSSH サーバーを追加し、" +
+                    "サービス sshd を開始しているか確認してください"
+            }
             if (profile.username.isEmpty()) {
                 error(
-                    "ファイル転送には Mac のユーザ名入りプロファイルが必要です。" +
+                    "ファイル転送にはユーザ名入りのプロファイルが必要です。" +
                         "接続先設定でユーザ名を入力してください"
                 )
             }
@@ -141,8 +147,7 @@ fun FileTransferScreen(
                 }
             }
             if (t is kotlinx.coroutines.CancellationException) throw t
-            errorMessage = "接続できませんでした: ${t.message}\n\n" +
-                "Mac の「システム設定 → 一般 → 共有 → リモートログイン」がオンか確認してください"
+            errorMessage = "接続できませんでした: ${t.message}\n\n$sshHint"
             loading = false
         }
     }

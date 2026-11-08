@@ -7,3 +7,5 @@ local.properties
 captures/
 .externalNativeBuild/
 .cxx/
+# Built by tools/build-freerdp-android.sh (CI caches them)
+app/src/main/jniLibs/
