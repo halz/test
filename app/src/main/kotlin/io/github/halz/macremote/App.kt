@@ -22,6 +22,7 @@ class App : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        CrashReport.install(this)
         appScope.launch {
             appSettings.idleTimeout.collect { sessionHolder.idleTimeoutMinutes = it.minutes }
         }
