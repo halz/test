@@ -3,6 +3,8 @@ package io.github.halz.macremote.ui.session
 import android.widget.Toast
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -11,21 +13,25 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -39,6 +45,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -62,11 +69,12 @@ import io.github.halz.macremote.data.Protocol
 import io.github.halz.macremote.data.SecretStore
 import io.github.halz.macremote.rfb.keysym.Keysyms
 import io.github.halz.macremote.rfb.messages.PointerButtons
+import io.github.halz.macremote.session.RemoteSession
 import io.github.halz.macremote.session.SessionHolder
 import io.github.halz.macremote.session.SessionState
-import io.github.halz.macremote.session.RemoteSession
-import kotlinx.coroutines.launch
 import kotlin.math.floor
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * The remote-screen view with one tab per live session. Sessions live in
@@ -132,6 +140,8 @@ fun SessionScreen(
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    // The floating toolbar and the tab strip under it show and hide together.
+    var chromeVisible by remember { mutableStateOf(true) }
 
     // Resolution changes go over SSH, which needs the Mac account (ARD login).
     fun macDisplayAction(
@@ -168,6 +178,8 @@ fun SessionScreen(
             state is SessionState.Connected -> ConnectedContent(
                 session = currentSession,
                 settings = settings,
+                chromeVisible = chromeVisible,
+                onChromeVisibleChange = { chromeVisible = it },
                 onOpenFiles = { onOpenFiles(currentId) },
                 onBackToList = onExit,
                 onDisconnect = { closeTab(currentId) },
@@ -185,15 +197,22 @@ fun SessionScreen(
             )
         }
 
-        // Session tabs, shown only when there is something to switch between.
-        if (sessions.size > 1 || (sessions.size == 1 && sessions[0].profile.id != currentId)) {
+        // Session tabs under the toolbar, shown only when there is something
+        // to switch between. Outside a live session they stay visible.
+        val connected = state is SessionState.Connected
+        if ((chromeVisible || !connected) &&
+            (sessions.size > 1 || (sessions.size == 1 && sessions[0].profile.id != currentId))
+        ) {
             SessionTabs(
                 sessions = sessions,
                 currentId = currentId,
-                onSelect = { currentId = it },
+                onSelect = { currentId = it; chromeVisible = true },
                 onCloseTab = { closeTab(it) },
                 onAdd = onExit,
-                modifier = Modifier.align(Alignment.BottomStart),
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding()
+                    .padding(top = if (connected) 72.dp else 8.dp),
             )
         }
     }
@@ -208,26 +227,74 @@ private fun SessionTabs(
     onAdd: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Surface(
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
-        shape = MaterialTheme.shapes.large,
-        modifier = modifier.navigationBarsPadding().padding(start = 8.dp, bottom = 56.dp),
+    Row(
+        modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            Modifier.horizontalScroll(rememberScrollState()).padding(4.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            sessions.forEach { session ->
-                val id = session.profile.id
-                FilterChip(
-                    selected = id == currentId,
-                    onClick = { if (id == currentId) onCloseTab(id) else onSelect(id) },
-                    label = { Text(if (id == currentId) "${session.profile.name.ifEmpty { session.profile.host }} ✕" else session.profile.name.ifEmpty { session.profile.host }) },
-                )
+        sessions.forEach { session ->
+            val id = session.profile.id
+            val selected = id == currentId
+            val state by session.state.collectAsState()
+            Row(
+                Modifier
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(ChromeBackground)
+                    .border(1.dp, if (selected) Accent else ChromeOutline, RoundedCornerShape(14.dp))
+                    .clickable { onSelect(id) }
+                    .padding(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SessionThumbnail(session, Modifier.size(width = 52.dp, height = 32.dp))
+                Column {
+                    Text(
+                        session.profile.name.ifEmpty { session.profile.host },
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelLarge,
+                        maxLines = 1,
+                    )
+                    Text(
+                        when (state) {
+                            is SessionState.Connected -> if (selected) "● 表示中" else "● 接続中"
+                            SessionState.Connecting -> "接続中…"
+                            else -> "切断"
+                        },
+                        color = if (state is SessionState.Connected) Online else ChromeSubtle,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+                if (selected) {
+                    Text(
+                        "✕",
+                        color = ChromeSubtle,
+                        modifier = Modifier.clip(CircleShape).clickable { onCloseTab(id) }.padding(6.dp),
+                    )
+                }
             }
-            TextButton(onClick = onAdd) { Text("＋") }
         }
+        Box(
+            Modifier
+                .clip(RoundedCornerShape(14.dp))
+                .background(ChromeBackground)
+                .clickable(onClick = onAdd)
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+        ) { Text("＋", color = Color.White) }
+    }
+}
+
+/** A live miniature of a session's remote screen. */
+@Composable
+private fun SessionThumbnail(session: RemoteSession, modifier: Modifier = Modifier) {
+    val frame by session.frame.collectAsState()
+    Canvas(modifier.clip(RoundedCornerShape(6.dp)).background(Color.DarkGray)) {
+        frame // redraw on every framebuffer update
+        val bitmap = session.display.bitmap
+        drawImage(
+            bitmap.asImageBitmap(),
+            srcSize = IntSize(bitmap.width, bitmap.height),
+            dstSize = IntSize(size.width.toInt(), size.height.toInt()),
+        )
     }
 }
 
@@ -236,6 +303,8 @@ private fun SessionTabs(
 private fun ConnectedContent(
     session: RemoteSession,
     settings: AppSettings,
+    chromeVisible: Boolean,
+    onChromeVisibleChange: (Boolean) -> Unit,
     onOpenFiles: () -> Unit,
     onBackToList: () -> Unit,
     onDisconnect: () -> Unit,
@@ -245,10 +314,22 @@ private fun ConnectedContent(
     val scope = rememberCoroutineScope()
     val transform = remember(session) { CanvasTransform() }
     var keyboardActive by remember { mutableStateOf(false) }
-    var toolbarVisible by remember { mutableStateOf(true) }
-    var scaleMenuOpen by remember { mutableStateOf(false) }
-    // One-shot modifiers applied to the next key or typed character.
+    var keyBarOpen by remember { mutableStateOf(false) }
+    var moreMenuOpen by remember { mutableStateOf(false) }
+    // Bumped by every toolbar interaction; restarts the auto-hide countdown.
+    var chromeTouch by remember { mutableStateOf(0) }
+    // Modifiers: one tap applies to the next key only, a second tap locks
+    // the modifier until it is tapped again.
     var modifiers by remember { mutableStateOf(setOf<Int>()) }
+    var lockedModifiers by remember { mutableStateOf(setOf<Int>()) }
+    val windows = session.profile.protocol == Protocol.RDP
+
+    LaunchedEffect(chromeVisible, chromeTouch, moreMenuOpen) {
+        if (chromeVisible && !moreMenuOpen) {
+            delay(CHROME_AUTO_HIDE_MILLIS)
+            onChromeVisibleChange(false)
+        }
+    }
 
     // Held as State (not plain values) so the remembered gesture callback
     // below reads live settings without being re-created on every change.
@@ -353,9 +434,20 @@ private fun ConnectedContent(
     }
 
     fun consumeModifiers(): List<Int> {
-        val current = modifiers.toList()
+        val current = (lockedModifiers + modifiers).toList()
         modifiers = emptySet()
         return current
+    }
+
+    fun tapModifier(keysym: Int) {
+        when (keysym) {
+            in lockedModifiers -> lockedModifiers = lockedModifiers - keysym
+            in modifiers -> {
+                modifiers = modifiers - keysym
+                lockedModifiers = lockedModifiers + keysym
+            }
+            else -> modifiers = modifiers + keysym
+        }
     }
 
     // Stable across recompositions (everything it touches is snapshot state or
@@ -435,117 +527,200 @@ private fun ConnectedContent(
             onKeysym = { keysym -> session.keyPress(keysym, consumeModifiers()) },
         )
 
-        Column(
-            Modifier
-                .align(Alignment.TopCenter)
-                .statusBarsPadding()
-                .padding(top = 4.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            if (toolbarVisible) {
-                Surface(
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
-                    shape = MaterialTheme.shapes.large,
-                ) {
-                    Row(
-                        Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        TextButton(onClick = onDisconnect) { Text("切断") }
-                        // Back to the list with the connection kept alive, so
-                        // another Mac can be opened as a second tab.
-                        TextButton(onClick = onBackToList) { Text("一覧") }
-                        FilterChip(
-                            selected = trackpad,
-                            onClick = { scope.launch { settings.setTrackpadMode(!trackpad) } },
-                            label = { Text("TP") },
+        if (chromeVisible) {
+            Row(
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding()
+                    .padding(top = 8.dp)
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(ChromeBackground)
+                    .border(1.dp, ChromeOutline, RoundedCornerShape(22.dp))
+                    .padding(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                // Back to the list with the connection kept alive.
+                ToolbarButton("▦", "一覧") { onBackToList() }
+                ToolbarButton(if (trackpad) "◎" else "☝", if (trackpad) "トラックパッド" else "タッチ", selected = trackpad) {
+                    chromeTouch++
+                    scope.launch { settings.setTrackpadMode(!trackpad) }
+                }
+                ToolbarButton(if (windows) "Ctrl" else "⌘", "キー", selected = keyBarOpen) {
+                    chromeTouch++
+                    keyBarOpen = !keyBarOpen
+                }
+                ToolbarButton("⤢", if (transform.userZoomed) "全体表示" else "拡大") {
+                    chromeTouch++
+                    if (transform.userZoomed) transform.fit() else transform.fill()
+                }
+                Box {
+                    ToolbarButton("⋯", "その他", selected = moreMenuOpen) { moreMenuOpen = true }
+                    DropdownMenu(expanded = moreMenuOpen, onDismissRequest = { moreMenuOpen = false; chromeTouch++ }) {
+                        DropdownMenuItem(
+                            text = { Text("貼り付け（端末のクリップボード）") },
+                            onClick = {
+                                moreMenuOpen = false
+                                clipboard.getText()?.text?.let { session.paste(it) }
+                            },
                         )
-                        TextButton(onClick = {
-                            clipboard.getText()?.text?.let { session.paste(it) }
-                        }) { Text("貼付") }
-                        TextButton(onClick = onOpenFiles) { Text("ファイル") }
-                        Box {
-                            TextButton(onClick = { scaleMenuOpen = true }) { Text("解像度") }
-                            DropdownMenu(expanded = scaleMenuOpen, onDismissRequest = { scaleMenuOpen = false }) {
-                                DisplayScale.entries.forEach { option ->
-                                    DropdownMenuItem(
-                                        text = {
-                                            Text(if (option == displayScale) "✓ ${option.label}" else option.label)
-                                        },
-                                        onClick = {
-                                            scaleMenuOpen = false
-                                            scope.launch { settings.setDisplayScale(option) }
-                                        },
-                                    )
-                                }
-                                if (onMacFullHd != null && onMacRestoreResolution != null) {
-                                    DropdownMenuItem(
-                                        text = { Text("Mac を Full HD に変更") },
-                                        onClick = { scaleMenuOpen = false; onMacFullHd() },
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Mac の解像度を元に戻す") },
-                                        onClick = { scaleMenuOpen = false; onMacRestoreResolution() },
-                                    )
-                                }
-                            }
+                        DropdownMenuItem(
+                            text = { Text("ファイル転送") },
+                            onClick = { moreMenuOpen = false; onOpenFiles() },
+                        )
+                        HorizontalDivider()
+                        Text(
+                            "表示の解像度",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        )
+                        DisplayScale.entries.forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text(if (option == displayScale) "✓ ${option.label}" else "　 ${option.label}") },
+                                onClick = {
+                                    moreMenuOpen = false
+                                    scope.launch { settings.setDisplayScale(option) }
+                                },
+                            )
                         }
-                        TextButton(onClick = { transform.fit() }) { Text("全体") }
-                        TextButton(onClick = { transform.fill() }) { Text("フィル") }
+                        if (onMacFullHd != null && onMacRestoreResolution != null) {
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("Mac を Full HD に変更") },
+                                onClick = { moreMenuOpen = false; onMacFullHd() },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Mac の解像度を元に戻す") },
+                                onClick = { moreMenuOpen = false; onMacRestoreResolution() },
+                            )
+                        }
+                        HorizontalDivider()
+                        DropdownMenuItem(
+                            text = { Text("切断", color = MaterialTheme.colorScheme.error) },
+                            onClick = { moreMenuOpen = false; onDisconnect() },
+                        )
                     }
                 }
             }
-            TextButton(onClick = { toolbarVisible = !toolbarVisible }) {
-                Text(if (toolbarVisible) "▲" else "▼", color = Color.White.copy(alpha = 0.6f))
+        } else {
+            // A slim handle brings the toolbar back.
+            Box(
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding()
+                    .size(width = 120.dp, height = 28.dp)
+                    .clickable { onChromeVisibleChange(true) },
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    Modifier
+                        .size(width = 56.dp, height = 5.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.55f)),
+                )
             }
         }
 
-        // Modifier/navigation keys along the bottom edge, above the IME when open.
-        Surface(
-            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
-            shape = MaterialTheme.shapes.large,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .navigationBarsPadding()
-                .padding(bottom = 4.dp),
-        ) {
+        // Keys along the bottom edge (above the soft keyboard when it is
+        // open). Collapsed, only a round keyboard button remains.
+        if (keyBarOpen || keyboardActive) {
             Row(
-                Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .background(ChromeBackground)
+                    .navigationBarsPadding()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                TextButton(onClick = { keyboardActive = !keyboardActive }) {
-                    Text(if (keyboardActive) "⌨✓" else "⌨")
+                KeyButton(if (keyboardActive) "⌨ ▼" else "⌨", selected = keyboardActive) {
+                    keyboardActive = !keyboardActive
                 }
-                ModifierChip("⌘", Keysyms.SUPER_L, modifiers) { modifiers = it }
-                ModifierChip("⌃", Keysyms.CONTROL_L, modifiers) { modifiers = it }
-                ModifierChip("⌥", Keysyms.ALT_L, modifiers) { modifiers = it }
-                ModifierChip("⇧", Keysyms.SHIFT_L, modifiers) { modifiers = it }
-                TextButton(onClick = { session.keyPress(Keysyms.ESCAPE, consumeModifiers()) }) { Text("Esc") }
-                TextButton(onClick = { session.keyPress(Keysyms.TAB, consumeModifiers()) }) { Text("Tab") }
-                TextButton(onClick = { session.keyPress(Keysyms.LEFT, consumeModifiers()) }) { Text("←") }
-                TextButton(onClick = { session.keyPress(Keysyms.UP, consumeModifiers()) }) { Text("↑") }
-                TextButton(onClick = { session.keyPress(Keysyms.DOWN, consumeModifiers()) }) { Text("↓") }
-                TextButton(onClick = { session.keyPress(Keysyms.RIGHT, consumeModifiers()) }) { Text("→") }
+                val modifierKeys = if (windows) {
+                    listOf("Ctrl" to Keysyms.CONTROL_L, "Alt" to Keysyms.ALT_L, "⊞" to Keysyms.SUPER_L, "⇧" to Keysyms.SHIFT_L)
+                } else {
+                    listOf("⌘" to Keysyms.SUPER_L, "⌥" to Keysyms.ALT_L, "⌃" to Keysyms.CONTROL_L, "⇧" to Keysyms.SHIFT_L)
+                }
+                modifierKeys.forEach { (label, keysym) ->
+                    KeyButton(
+                        label,
+                        selected = keysym in modifiers,
+                        locked = keysym in lockedModifiers,
+                    ) { tapModifier(keysym) }
+                }
+                listOf(
+                    "Esc" to Keysyms.ESCAPE, "Tab" to Keysyms.TAB,
+                    "←" to Keysyms.LEFT, "↑" to Keysyms.UP, "↓" to Keysyms.DOWN, "→" to Keysyms.RIGHT,
+                    "Del" to Keysyms.DELETE, "Home" to Keysyms.HOME, "End" to Keysyms.END,
+                    "PgUp" to Keysyms.PAGE_UP, "PgDn" to Keysyms.PAGE_DOWN,
+                ).forEach { (label, keysym) ->
+                    KeyButton(label) { session.keyPress(keysym, consumeModifiers()) }
+                }
+                KeyButton("貼付") { clipboard.getText()?.text?.let { session.paste(it) } }
+                if (!keyboardActive) KeyButton("✕") { keyBarOpen = false }
             }
+        } else {
+            Box(
+                Modifier
+                    .align(Alignment.BottomEnd)
+                    .navigationBarsPadding()
+                    .padding(16.dp)
+                    .size(52.dp)
+                    .clip(CircleShape)
+                    .background(ChromeBackground)
+                    .border(1.dp, ChromeOutline, CircleShape)
+                    .clickable { keyboardActive = true },
+                contentAlignment = Alignment.Center,
+            ) { Text("⌨", color = Color.White, style = MaterialTheme.typography.titleLarge) }
         }
     }
 }
 
+/** An icon-and-caption button in the floating toolbar. */
 @Composable
-private fun ModifierChip(
-    label: String,
-    keysym: Int,
-    active: Set<Int>,
-    onChange: (Set<Int>) -> Unit,
-) {
-    FilterChip(
-        selected = keysym in active,
-        onClick = { onChange(if (keysym in active) active - keysym else active + keysym) },
-        label = { Text(label) },
-    )
+private fun ToolbarButton(icon: String, caption: String, selected: Boolean = false, onClick: () -> Unit) {
+    Column(
+        Modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (selected) Accent else Color.Transparent)
+            .clickable(onClick = onClick)
+            .widthIn(min = 56.dp)
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(icon, color = Color.White, style = MaterialTheme.typography.titleMedium, maxLines = 1)
+        Text(caption, color = if (selected) Color.White else ChromeSubtle, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+    }
 }
+
+/** A key in the bottom key bar; [selected] is one-shot, [locked] held. */
+@Composable
+private fun KeyButton(label: String, selected: Boolean = false, locked: Boolean = false, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(10.dp)
+    Box(
+        Modifier
+            .clip(shape)
+            .background(if (locked) Accent else KeyBackground)
+            .border(1.5.dp, if (selected) Accent else Color.Transparent, shape)
+            .clickable(onClick = onClick)
+            .widthIn(min = 44.dp)
+            .padding(horizontal = 10.dp, vertical = 9.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(label, color = Color.White, style = MaterialTheme.typography.labelLarge, maxLines = 1)
+    }
+}
+
+private val ChromeBackground = Color(0xE6141820)
+private val ChromeOutline = Color(0x33FFFFFF)
+private val ChromeSubtle = Color(0xFF8B95A7)
+private val KeyBackground = Color(0xFF2A303C)
+private val Accent = Color(0xFF4F8CFF)
+private val Online = Color(0xFF38D27A)
+private const val CHROME_AUTO_HIDE_MILLIS = 4_000L
 
 @Composable
 private fun ErrorPane(message: String, onRetry: (() -> Unit)?, onExit: () -> Unit) {
