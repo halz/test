@@ -36,6 +36,7 @@ fun AppNavGraph(
                     }
                 },
                 onEdit = { id -> navController.navigate(if (id == null) "edit" else "edit?id=$id") },
+                onOpenFiles = { id -> navController.navigate("files/$id") },
                 onOpenGestureSettings = { navController.navigate("settings/gestures") },
             )
         }
@@ -45,6 +46,9 @@ fun AppNavGraph(
                 repository = profileRepository,
                 secretStore = secretStore,
                 onDone = { navController.popBackStack() },
+                onConnect = { profile ->
+                    navController.navigate("session/${profile.id}") { popUpTo("profiles") }
+                },
             )
         }
         composable("edit") {
@@ -53,6 +57,9 @@ fun AppNavGraph(
                 repository = profileRepository,
                 secretStore = secretStore,
                 onDone = { navController.popBackStack() },
+                onConnect = { profile ->
+                    navController.navigate("session/${profile.id}") { popUpTo("profiles") }
+                },
             )
         }
         composable("session/{profileId}") { backStackEntry ->

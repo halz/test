@@ -15,6 +15,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 sealed class SessionState {
@@ -167,8 +168,24 @@ class SessionHolder(private val appScope: CoroutineScope, private val context: C
     private val _sessions = MutableStateFlow<List<RemoteSession>>(emptyList())
     val sessions: StateFlow<List<RemoteSession>> = _sessions
 
+    private val _thumbnailVersion = MutableStateFlow(0)
+    /** Bumped whenever a saved thumbnail changes, so lists reload it. */
+    val thumbnailVersion: StateFlow<Int> = _thumbnailVersion
+
+    /** Saves the session's current screen as its thumbnail (if it has one). */
+    private fun snapshot(session: RemoteSession) {
+        if (session.state.value !is SessionState.Connected) return
+        val bitmap = session.display.bitmap
+        val id = session.profile.id
+        appScope.launch(Dispatchers.IO) {
+            runCatching { Thumbnails.save(context, id, bitmap) }
+            _thumbnailVersion.update { it + 1 }
+        }
+    }
+
     fun start(profile: Profile, password: String): RemoteSession {
         _sessions.value.find { it.profile.id == profile.id }?.let { existing ->
+            snapshot(existing)
             existing.close()
             _sessions.value = _sessions.value - existing
         }
@@ -188,6 +205,7 @@ class SessionHolder(private val appScope: CoroutineScope, private val context: C
 
     fun close(profileId: String) {
         sessionFor(profileId)?.let { session ->
+            snapshot(session)
             session.close()
             _sessions.value = _sessions.value - session
         }
@@ -195,7 +213,10 @@ class SessionHolder(private val appScope: CoroutineScope, private val context: C
     }
 
     fun closeAll() {
-        _sessions.value.forEach { it.close() }
+        _sessions.value.forEach {
+            snapshot(it)
+            it.close()
+        }
         _sessions.value = emptyList()
         SessionService.stop(context)
     }
@@ -212,6 +233,7 @@ class SessionHolder(private val appScope: CoroutineScope, private val context: C
     }
 
     fun onAppBackground() {
+        _sessions.value.forEach { snapshot(it) }
         if (idleTimeoutMinutes <= 0 || _sessions.value.isEmpty()) return
         idleJob = appScope.launch {
             delay(idleTimeoutMinutes * 60_000L)
