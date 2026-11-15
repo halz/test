@@ -16,6 +16,9 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
+        // FreeRDP is only built for arm64 (tools/build-freerdp-android.sh);
+        // other ABIs would only add dead weight from dependencies.
+        ndk { abiFilters += "arm64-v8a" }
     }
 
     // A fixed debug keystore checked into the repo: CI runners are ephemeral,
