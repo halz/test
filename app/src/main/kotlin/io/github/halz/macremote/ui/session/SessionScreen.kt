@@ -89,6 +89,7 @@ fun SessionScreen(
     settings: AppSettings,
     sessionHolder: SessionHolder,
     onOpenFiles: (String) -> Unit,
+    onOpenTerminal: (String) -> Unit,
     onExit: () -> Unit,
 ) {
     val sessions by sessionHolder.sessions.collectAsState()
@@ -181,6 +182,7 @@ fun SessionScreen(
                 chromeVisible = chromeVisible,
                 onChromeVisibleChange = { chromeVisible = it },
                 onOpenFiles = { onOpenFiles(currentId) },
+                onOpenTerminal = { onOpenTerminal(currentId) },
                 onBackToList = onExit,
                 onDisconnect = { closeTab(currentId) },
                 onMacFullHd = macDisplayAction(currentSession.profile, "Full HD に変更しました") { profile, password ->
@@ -306,6 +308,7 @@ private fun ConnectedContent(
     chromeVisible: Boolean,
     onChromeVisibleChange: (Boolean) -> Unit,
     onOpenFiles: () -> Unit,
+    onOpenTerminal: () -> Unit,
     onBackToList: () -> Unit,
     onDisconnect: () -> Unit,
     onMacFullHd: (() -> Unit)?,
@@ -567,6 +570,10 @@ private fun ConnectedContent(
                         DropdownMenuItem(
                             text = { Text("ファイル転送") },
                             onClick = { moreMenuOpen = false; onOpenFiles() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("ターミナル（SSH）") },
+                            onClick = { moreMenuOpen = false; onOpenTerminal() },
                         )
                         HorizontalDivider()
                         Text(

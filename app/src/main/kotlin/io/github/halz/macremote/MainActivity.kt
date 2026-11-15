@@ -46,6 +46,7 @@ class MainActivity : ComponentActivity() {
                     secretStore = app.secretStore,
                     settings = app.appSettings,
                     sessionHolder = app.sessionHolder,
+                    shellHolder = app.shellHolder,
                 )
                 var report by remember { mutableStateOf(crash) }
                 report?.let { CrashDialog(it, onDismiss = { report = null }) }

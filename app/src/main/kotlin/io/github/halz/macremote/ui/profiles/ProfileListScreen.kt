@@ -102,6 +102,7 @@ fun ProfileListScreen(
     onConnect: (Profile) -> Unit,
     onEdit: (String?) -> Unit,
     onOpenFiles: (String) -> Unit,
+    onOpenTerminal: (String) -> Unit,
     onOpenGestureSettings: () -> Unit,
 ) {
     val profiles by repository.profiles.collectAsState(initial = emptyList())
@@ -159,6 +160,7 @@ fun ProfileListScreen(
         connect = onConnect,
         edit = { onEdit(it.id) },
         files = { onOpenFiles(it.id) },
+        terminal = { onOpenTerminal(it.id) },
         duplicate = { profile ->
             scope.launch {
                 val id = UUID.randomUUID().toString()
@@ -308,6 +310,7 @@ private class ProfileActions(
     val connect: (Profile) -> Unit,
     val edit: (Profile) -> Unit,
     val files: (Profile) -> Unit,
+    val terminal: (Profile) -> Unit,
     val duplicate: (Profile) -> Unit,
     val reboot: (Profile) -> Unit,
     val disconnect: (Profile) -> Unit,
@@ -490,6 +493,7 @@ private fun ActionSheetContent(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ActionTile("✎", "編集", Modifier.weight(1f)) { onDone(); actions.edit(profile) }
             ActionTile("⎘", "ファイル", Modifier.weight(1f)) { onDone(); actions.files(profile) }
+            ActionTile(">_", "ターミナル", Modifier.weight(1f)) { onDone(); actions.terminal(profile) }
             ActionTile("⧉", "複製", Modifier.weight(1f)) { onDone(); actions.duplicate(profile) }
             ActionTile("⟳", "再起動", Modifier.weight(1f), danger = true) { onDone(); actions.reboot(profile) }
         }
@@ -539,6 +543,7 @@ private fun DetailPane(
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             ActionTile("✎", "編集", Modifier.weight(1f)) { actions.edit(profile) }
             ActionTile("⎘", "ファイル転送", Modifier.weight(1f)) { actions.files(profile) }
+            ActionTile(">_", "ターミナル", Modifier.weight(1f)) { actions.terminal(profile) }
             ActionTile("⧉", "複製", Modifier.weight(1f)) { actions.duplicate(profile) }
             ActionTile("⟳", "強制再起動", Modifier.weight(1f), danger = true) { actions.reboot(profile) }
             if (session != null) ActionTile("⏏", "切断", Modifier.weight(1f)) { actions.disconnect(profile) }

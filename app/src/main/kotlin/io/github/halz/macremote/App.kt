@@ -8,6 +8,7 @@ import io.github.halz.macremote.data.ProfileRepository
 import io.github.halz.macremote.data.SecretStore
 import io.github.halz.macremote.data.profileDataStore
 import io.github.halz.macremote.session.SessionHolder
+import io.github.halz.macremote.session.ShellHolder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
@@ -19,6 +20,7 @@ class App : Application() {
     val secretStore by lazy { SecretStore(profileDataStore) }
     val appSettings by lazy { AppSettings(profileDataStore) }
     val sessionHolder by lazy { SessionHolder(appScope, this) }
+    val shellHolder by lazy { ShellHolder(appScope) }
 
     override fun onCreate() {
         super.onCreate()

@@ -8,11 +8,13 @@ import io.github.halz.macremote.data.AppSettings
 import io.github.halz.macremote.data.ProfileRepository
 import io.github.halz.macremote.data.SecretStore
 import io.github.halz.macremote.session.SessionHolder
+import io.github.halz.macremote.session.ShellHolder
 import io.github.halz.macremote.ui.files.FileTransferScreen
 import io.github.halz.macremote.ui.profiles.ProfileEditScreen
 import io.github.halz.macremote.ui.profiles.ProfileListScreen
 import io.github.halz.macremote.ui.session.SessionScreen
 import io.github.halz.macremote.ui.settings.GestureSettingsScreen
+import io.github.halz.macremote.ui.terminal.TerminalScreen
 
 @Composable
 fun AppNavGraph(
@@ -20,6 +22,7 @@ fun AppNavGraph(
     secretStore: SecretStore,
     settings: AppSettings,
     sessionHolder: SessionHolder,
+    shellHolder: ShellHolder,
 ) {
     val navController = rememberNavController()
     NavHost(navController = navController, startDestination = "profiles") {
@@ -37,6 +40,7 @@ fun AppNavGraph(
                 },
                 onEdit = { id -> navController.navigate(if (id == null) "edit" else "edit?id=$id") },
                 onOpenFiles = { id -> navController.navigate("files/$id") },
+                onOpenTerminal = { id -> navController.navigate("terminal/$id") },
                 onOpenGestureSettings = { navController.navigate("settings/gestures") },
             )
         }
@@ -70,12 +74,22 @@ fun AppNavGraph(
                 settings = settings,
                 sessionHolder = sessionHolder,
                 onOpenFiles = { id -> navController.navigate("files/$id") },
+                onOpenTerminal = { id -> navController.navigate("terminal/$id") },
                 onExit = { navController.popBackStack() },
             )
         }
         composable("settings/gestures") {
             GestureSettingsScreen(
                 settings = settings,
+                onBack = { navController.popBackStack() },
+            )
+        }
+        composable("terminal/{profileId}") { backStackEntry ->
+            TerminalScreen(
+                profileId = backStackEntry.arguments?.getString("profileId").orEmpty(),
+                repository = profileRepository,
+                secretStore = secretStore,
+                shellHolder = shellHolder,
                 onBack = { navController.popBackStack() },
             )
         }
