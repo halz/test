@@ -77,3 +77,62 @@ jobs:
           git push --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" apk-dist
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  desktop-build:
+    name: Windows desktop app (EXE)
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Run :desktop tests
+        run: ./gradlew :desktop:test --console=plain
+      # Portable build: a folder with MacRemote.exe and a bundled Java runtime.
+      - name: Build portable app
+        run: ./gradlew :desktop:createDistributable --console=plain
+      - name: Zip portable app
+        shell: pwsh
+        run: Compress-Archive -Path desktop/build/compose/binaries/main/app/MacRemote -DestinationPath MacRemote-portable.zip
+      # jpackage builds the installer with WiX 3; install it if the image lacks it.
+      - name: Ensure WiX Toolset 3
+        shell: pwsh
+        run: |
+          if (-not (Get-Command candle.exe -ErrorAction SilentlyContinue)) {
+            choco install wixtoolset --no-progress -y
+            Get-ChildItem "C:\Program Files (x86)" -Filter "WiX Toolset v3*" | ForEach-Object { "$($_.FullName)\bin" >> $env:GITHUB_PATH }
+          }
+      - name: Build installer
+        run: |
+          ./gradlew :desktop:packageExe --console=plain
+          cp desktop/build/compose/binaries/main/exe/MacRemote-*.exe MacRemote-setup.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-desktop
+          path: |
+            MacRemote-portable.zip
+            MacRemote-setup.exe
+      # Also publish to the `exe-dist` branch so the files can be fetched over
+      # plain git transport (Actions artifact downloads require auth).
+      - name: Push to exe-dist branch
+        if: github.event_name == 'push'
+        run: |
+          ls -l MacRemote-portable.zip MacRemote-setup.exe
+          mkdir "$RUNNER_TEMP/dist"
+          cp MacRemote-portable.zip MacRemote-setup.exe "$RUNNER_TEMP/dist/"
+          cd "$RUNNER_TEMP/dist"
+          git init -b exe-dist
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add MacRemote-portable.zip MacRemote-setup.exe
+          git commit -m "Windows build from ${GITHUB_SHA}"
+          git push --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" exe-dist
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

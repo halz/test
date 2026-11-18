@@ -8,6 +8,8 @@ iOS の「Screens」のように、Android 端末から Mac の「画面共有�
 |---|---|
 | `:rfb` | 純 Kotlin/JVM の RFB (VNC) プロトコル実装。Android 非依存で、JVM 単体でテスト可能 |
 | `:app` | Jetpack Compose の Android アプリ本体。RDP は [FreeRDP](https://github.com/FreeRDP/FreeRDP) (Apache 2.0) のネイティブライブラリを組み込んで使用 |
+| `:shared` | Android 版と Windows 版で共有する純 JVM コード (接続先モデル、SSH 実行、強制再起動、Mac の Full HD 切替) |
+| `:desktop` | Compose Multiplatform for Desktop の Windows 版 (下記「Windows 版」) |
 
 `:app` は Android SDK がある環境でのみ Gradle に include されます (`settings.gradle.kts`)。SDK のない CI コンテナでも `gradle :rfb:test` が動きます。
 
@@ -150,6 +152,38 @@ Retina Mac のフル解像度 (例 2880x1800) をそのまま扱うとメモリ�
 - 「リモートログイン」が有効で、プロファイルにユーザ名が入っている必要があります (SSH で実行するため)
 - Windows (RDP) は接続時に自動で Full HD になるため、この操作は不要です
 
+## Windows 版 (デスクトップ)
+
+Windows 10/11 (x64) から同じように Mac / Windows へ接続するデスクトップアプリです。Java のインストールは不要です (実行環境を同梱)。
+
+- **ポータブル版** `MacRemote-portable.zip`: 展開して `MacRemote\MacRemote.exe` をダブルクリック
+- **インストーラ版** `MacRemote-setup.exe`: ユーザ単位でインストール (管理者権限不要)。スタートメニューとデスクトップにショートカットを作成
+
+CI がビルドし、`exe-dist` ブランチに置きます。PC にも Tailscale を入れて同じ Tailnet にログインしてください。
+
+| 機能 | Windows 版での動作 |
+|---|---|
+| 接続先一覧 | カード表示・検索・Mac/Windows フィルタ。クリックで接続、右クリック (または「⋯」) で編集・ファイル転送・ターミナル・複製・強制再起動・切断 |
+| Mac (画面共有) | アプリ内のタブで表示。マウス (左/右/中ボタン・ホイール・横スクロール) とキーボードをそのまま送信 |
+| Windows (RDP) | Windows 標準の「リモート デスクトップ接続」(mstsc) を起動。パスワードは資格情報マネージャー (`TERMSRV/ホスト`) に登録してから渡す |
+| ファイル転送 / ターミナル | 別ウィンドウで開く (SFTP / SSH。ターミナルは [JediTerm](https://github.com/JetBrains/jediterm), LGPL-3.0) |
+| 設定のエクスポート / インポート | Android 版と同じ JSON 形式で相互に移行可能 |
+
+データは `%APPDATA%\MacRemote` に保存し、パスワードは Windows の DPAPI で暗号化します (同じ Windows アカウントでのみ復号可能)。
+
+### Mac 接続中の操作
+
+| 操作 | 動作 |
+|---|---|
+| マウス・ホイール | そのまま Mac へ (トラックパッドの 2 本指スクロールも可) |
+| Ctrl | ⌘ Command として送る (既定)。Alt は ⌥ Option、Windows キーは ⌃ Control |
+| 「その他 → Ctrl を ⌘ として送る」をオフ | Mac のキー配置どおり: Alt が ⌘、Windows キーが ⌥、Ctrl が ⌃ |
+| ツールバー | 画面上端の中央にマウスを乗せると表示。一覧・全体表示/等倍・全画面・貼り付け・文字入力・その他 |
+| クリップボード | Mac でコピーした文字は PC にも入る。PC でコピーした英数字は Mac に送られ ⌘V で貼れる |
+| 日本語 | ツールバーの「文字入力」で PC の IME で入力して送るか、PC でコピーして「貼り付け」。Mac 側 IME の切替は「その他 → 入力ソース切替 (⌃Space)」 |
+
+Windows キーを含む一部のショートカット (Win+L、Ctrl+Alt+Del、Alt+Tab など) は Windows 自身が先に処理するため Mac には届きません。
+
 ## ビルド
 
 Android Studio でそのまま開くか:
@@ -158,6 +192,14 @@ Android Studio でそのまま開くか:
 tools/build-freerdp-android.sh   # RDP 用ネイティブライブラリ (要 Android NDK, cmake, ninja, perl)
 ./gradlew :app:assembleDebug     # 要 Android SDK
 ./gradlew :rfb:test              # プロトコル層のテスト (SDK 不要)
+```
+
+Windows 版:
+
+```bash
+./gradlew :desktop:run                 # 開発実行
+./gradlew :desktop:createDistributable # ポータブル版 (desktop/build/compose/binaries/main/app/MacRemote)
+./gradlew :desktop:packageExe          # インストーラ (Windows 上で、要 WiX Toolset 3)
 ```
 
 ネイティブライブラリ (FreeRDP + OpenSSL) は `app/src/main/jniLibs/` に出力されます。CI はこれをキャッシュし、ビルドスクリプトが変わったときだけ再ビルドします (初回は 15 分程度)。ライブラリなしでビルドした APK でも Mac (VNC) 接続は動作し、Windows 接続時のみエラーになります。

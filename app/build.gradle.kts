@@ -65,6 +65,7 @@ kotlin {
 
 dependencies {
     implementation(project(":rfb"))
+    implementation(project(":shared"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.navigation.compose)
