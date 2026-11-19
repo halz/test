@@ -43,6 +43,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.awt.awtEventOrNull
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -365,7 +366,7 @@ private fun ConnectedContent(
                 .fillMaxSize()
                 .onSizeChanged { viewSize = it }
                 .onPreviewKeyEvent { event ->
-                    val awt = event.nativeKeyEvent as? java.awt.event.KeyEvent ?: return@onPreviewKeyEvent false
+                    val awt = event.awtEventOrNull ?: return@onPreviewKeyEvent false
                     translator.onKey(awt)
                 }
                 .onFocusChanged { if (!it.isFocused) translator.releaseAll() }
