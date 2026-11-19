@@ -39,6 +39,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -57,6 +58,7 @@ import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.isTertiaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -271,7 +273,45 @@ private fun ConnectedContent(
     var viewSize by remember { mutableStateOf(IntSize.Zero) }
     var mouse by remember { mutableStateOf(Offset.Zero) }
     val focus = remember { FocusRequester() }
-    val translator = remember(session) { KeyTranslator { keysym, down -> session.key(keysym, down) } }
+    val scope = rememberCoroutineScope()
+
+    // Clipboard sync, over SSH (see VncSession): the PC's clipboard goes to
+    // the Mac when the window comes to the front and before every ⌘V; the
+    // Mac's comes back after ⌘C/⌘X and when the window goes to the back.
+    val clipboard = remember { ClipboardBridge() }
+    val clipboardError: (String) -> Unit = remember(session) {
+        { message -> app.notify("Mac とクリップボードを共有できません（「リモートログイン」が必要です）: $message") }
+    }
+    fun pushLocal() {
+        clipboard.takeLocalChange()?.let { session.setMacClipboard(it, clipboardError) }
+    }
+    fun pullRemote(delayMillis: Long = 0) {
+        scope.launch {
+            delay(delayMillis)
+            session.macClipboard(clipboardError)?.takeIf { it.isNotEmpty() }?.let { clipboard.setFromRemote(it) }
+        }
+    }
+    val windowFocused = LocalWindowInfo.current.isWindowFocused
+    LaunchedEffect(session, windowFocused) { if (windowFocused) pushLocal() else pullRemote() }
+    // Mac → PC also covers servers that do send ServerCutText (not macOS).
+    LaunchedEffect(session) {
+        session.serverClipboard.collect { text -> if (!text.isNullOrEmpty()) clipboard.setFromRemote(text) }
+    }
+
+    val translator = remember(session) {
+        lateinit var translator: KeyTranslator
+        translator = KeyTranslator { keysym, down ->
+            if (down && translator.isHeld(Keysyms.SUPER_L)) {
+                when (keysym) {
+                    'v'.code -> pushLocal()
+                    // Give the Mac a moment to update its clipboard.
+                    'c'.code, 'x'.code -> pullRemote(delayMillis = 400)
+                }
+            }
+            session.key(keysym, down)
+        }
+        translator
+    }
     SideEffect { translator.ctrlAsCommand = settings.ctrlAsCommand }
     var menuOpen by remember { mutableStateOf(false) }
     var textDialogOpen by remember { mutableStateOf(false) }
@@ -293,23 +333,9 @@ private fun ConnectedContent(
     }
     LaunchedEffect(handleHovered) { if (handleHovered) onChromeVisibleChange(true) }
 
-    // Clipboard sync. Mac → PC: whatever the Mac copies. PC → Mac: polled,
-    // since AWT has no change notification; the RFB clipboard is Latin-1 only
-    // (other text is pasted with the toolbar's 貼り付け, which types it).
-    val clipboard = remember { ClipboardBridge() }
-    LaunchedEffect(session) {
-        session.serverClipboard.collect { text -> if (!text.isNullOrEmpty()) clipboard.setFromRemote(text) }
-    }
-    LaunchedEffect(session) {
-        while (true) {
-            clipboard.takeLocalChange()?.let { session.sendClipboard(it) }
-            delay(1_000)
-        }
-    }
-
     fun pasteLocal() {
         val text = clipboard.read()
-        if (text.isNullOrEmpty()) app.notify("PC のクリップボードに文字がありません") else session.paste(text)
+        if (text.isNullOrEmpty()) app.notify("PC のクリップボードに文字がありません") else session.paste(text, clipboardError)
         focus.requestFocus()
     }
 

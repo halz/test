@@ -3,6 +3,7 @@ package io.github.halz.macremote.desktop.session
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import io.github.halz.macremote.data.Profile
+import io.github.halz.macremote.data.SshExec
 import io.github.halz.macremote.rfb.RfbAuthException
 import io.github.halz.macremote.rfb.client.RfbClient
 import io.github.halz.macremote.rfb.client.RfbEvent
@@ -35,7 +36,7 @@ sealed class SessionState {
  */
 class VncSession(
     val profile: Profile,
-    password: String,
+    private val password: String,
     scope: CoroutineScope,
 ) {
     val client = RfbClient(profile.host, profile.port, profile.username, password)
@@ -108,28 +109,60 @@ class VncSession(
         inputQueue.trySend { client.sendText(value) }
     }
 
-    /** Puts Latin-1 text on the Mac's clipboard (the RFB cut-text message can carry nothing else). */
-    fun sendClipboard(value: String) {
-        if (value.isEmpty() || !value.all { it.code in 0..0xFF }) return
-        inputQueue.trySend { client.sendCutText(value) }
+    // The Mac's clipboard is reached over SSH with pbcopy/pbpaste: macOS
+    // Screen Sharing ignores the RFB cut-text messages. That needs "Remote
+    // Login" and a profile username; after the first failure the session
+    // stops trying (an unreachable sshd would otherwise stall input each time).
+    @Volatile
+    private var sshClipboard = profile.username.isNotEmpty()
+
+    private suspend fun macClipboardCommand(command: String, stdin: String?): String {
+        // pbcopy/pbpaste only read and write UTF-8 under a UTF-8 locale.
+        val result = SshExec.run(
+            profile.host, profile.username, password, "LANG=en_US.UTF-8 $command",
+            stdin = stdin, timeoutMillis = 5_000,
+        )
+        if (result.exitStatus != 0) error(result.stderr.trim().ifEmpty { "$command: exit ${result.exitStatus}" })
+        return result.stdout
     }
 
-    /**
-     * Pastes into the Mac. Latin-1 text goes via the VNC clipboard plus Cmd+V;
-     * anything else (Japanese etc.) is typed out as Unicode key events.
-     */
-    fun paste(value: String) {
+    private fun disableSshClipboard(e: Throwable, onError: (String) -> Unit) {
+        sshClipboard = false
+        onError(e.message ?: e.javaClass.simpleName)
+    }
+
+    /** Copies text to the Mac's clipboard, queued with the input so a ⌘V sent afterwards pastes it. */
+    fun setMacClipboard(value: String, onError: (String) -> Unit) {
+        if (!sshClipboard || value.isEmpty()) return
+        inputQueue.trySend {
+            runCatching { macClipboardCommand("pbcopy", value) }.onFailure { disableSshClipboard(it, onError) }
+        }
+    }
+
+    /** The Mac's clipboard text, or null when it cannot be read. */
+    suspend fun macClipboard(onError: (String) -> Unit): String? {
+        if (!sshClipboard) return null
+        return runCatching { macClipboardCommand("pbpaste", null) }
+            .onFailure { disableSshClipboard(it, onError) }
+            .getOrNull()
+    }
+
+    /** Pastes into the Mac via its clipboard and ⌘V; without SSH the text is typed out instead. */
+    fun paste(value: String, onError: (String) -> Unit) {
         if (value.isEmpty()) return
-        if (value.all { it.code in 0..0xFF }) {
-            inputQueue.trySend {
-                client.sendCutText(value)
+        inputQueue.trySend {
+            val copied = sshClipboard &&
+                runCatching { macClipboardCommand("pbcopy", value) }
+                    .onFailure { disableSshClipboard(it, onError) }
+                    .isSuccess
+            if (copied) {
                 client.sendKey(Keysyms.SUPER_L, true)
                 client.sendKey('v'.code, true)
                 client.sendKey('v'.code, false)
                 client.sendKey(Keysyms.SUPER_L, false)
+            } else {
+                client.sendText(value)
             }
-        } else {
-            text(value)
         }
     }
 

@@ -39,6 +39,9 @@ class KeyTranslator(private val send: (keysym: Int, down: Boolean) -> Unit) {
     /** Left and right Shift/Ctrl share a key code; the location tells them apart. */
     private fun keyId(event: KeyEvent) = event.keyCode * 8 + event.keyLocation
 
+    /** Whether a key that sent [keysym] is held down right now. */
+    fun isHeld(keysym: Int): Boolean = keysym in pressed.values
+
     /** Releases everything still held, e.g. when the window loses focus mid-shortcut. */
     fun releaseAll() {
         pressed.values.forEach { send(it, false) }

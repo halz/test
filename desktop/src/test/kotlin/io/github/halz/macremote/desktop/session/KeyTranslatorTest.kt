@@ -69,6 +69,14 @@ class KeyTranslatorTest {
     }
 
     @Test
+    fun `isHeld follows the Command key`() {
+        press(KeyEvent.VK_CONTROL, location = KeyEvent.KEY_LOCATION_LEFT)
+        assertEquals(true, translator.isHeld(Keysyms.SUPER_L))
+        release(KeyEvent.VK_CONTROL, location = KeyEvent.KEY_LOCATION_LEFT)
+        assertEquals(false, translator.isHeld(Keysyms.SUPER_L))
+    }
+
+    @Test
     fun `releaseAll lifts every held key`() {
         press(KeyEvent.VK_CONTROL, location = KeyEvent.KEY_LOCATION_LEFT)
         press(KeyEvent.VK_A, '\u0001')
