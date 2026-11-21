@@ -49,6 +49,8 @@ import androidx.compose.ui.unit.sp
 import io.github.halz.macremote.data.Profile
 import io.github.halz.macremote.data.ProfileRepository
 import io.github.halz.macremote.data.Protocol
+import io.github.halz.macremote.data.RemoteOs
+import io.github.halz.macremote.data.platform
 import io.github.halz.macremote.data.SecretStore
 import io.github.halz.macremote.session.Thumbnails
 import io.github.halz.macremote.ui.theme.AppColors
@@ -75,6 +77,8 @@ fun ProfileEditScreen(
     var port by remember { mutableStateOf("5900") }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var os by remember { mutableStateOf(RemoteOs.MAC) }
+    // Only Linux lets the user pick; Mac is always VNC and Windows RDP.
     var protocol by remember { mutableStateOf(Protocol.VNC) }
     var loaded by remember { mutableStateOf(profileId == null) }
     var advancedOpen by remember { mutableStateOf(false) }
@@ -88,6 +92,7 @@ fun ProfileEditScreen(
                 port = existing.port.toString()
                 username = existing.username
                 protocol = existing.protocol
+                os = existing.platform
                 password = secretStore.loadPassword(profileId).orEmpty()
             }
             loaded = true
@@ -103,6 +108,7 @@ fun ProfileEditScreen(
                 port = port.toIntOrNull() ?: protocol.defaultPort,
                 username = username.trim(),
                 protocol = protocol,
+                os = os,
             )
             repository.upsert(profile)
             secretStore.savePassword(profile.id, password)
@@ -169,31 +175,77 @@ fun ProfileEditScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Column(Modifier.widthIn(max = 520.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                fun selectProtocol(next: Protocol) {
+                    // Follow the default port unless the user typed a custom one.
+                    if (port == protocol.defaultPort.toString()) port = next.defaultPort.toString()
+                    protocol = next
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Protocol.entries.forEach { option ->
+                    RemoteOs.entries.forEach { option ->
                         OsOption(
                             option = option,
-                            selected = protocol == option,
+                            selected = os == option,
                             modifier = Modifier.weight(1f),
                         ) {
-                            // Follow the default port unless the user typed a custom one.
-                            if (port == protocol.defaultPort.toString()) port = option.defaultPort.toString()
-                            protocol = option
+                            os = option
+                            selectProtocol(
+                                when (option) {
+                                    RemoteOs.MAC -> Protocol.VNC
+                                    RemoteOs.WINDOWS -> Protocol.RDP
+                                    // GNOME Remote Desktop and xrdp speak RDP.
+                                    RemoteOs.LINUX -> Protocol.RDP
+                                }
+                            )
+                        }
+                    }
+                }
+                if (os == RemoteOs.LINUX) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(
+                            Protocol.RDP to "RDP（GNOME / xrdp）",
+                            Protocol.VNC to "VNC",
+                        ).forEach { (option, label) ->
+                            val on = protocol == option
+                            Box(
+                                Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (on) AppColors.Accent.copy(alpha = 0.14f) else AppColors.Surface)
+                                    .border(1.dp, if (on) AppColors.Accent else AppColors.Outline, RoundedCornerShape(12.dp))
+                                    .clickable { selectProtocol(option) }
+                                    .padding(vertical = 10.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    "$label · ${option.defaultPort}",
+                                    color = if (on) AppColors.Text else AppColors.Subtle,
+                                    fontSize = 13.sp,
+                                )
+                            }
                         }
                     }
                 }
 
                 FieldGroup("接続先") {
-                    Field("名前", name, { name = it }, placeholder = if (protocol == Protocol.VNC) "MacBook Pro" else "自宅の PC")
+                    Field(
+                        "名前", name, { name = it },
+                        placeholder = when (os) {
+                            RemoteOs.MAC -> "MacBook Pro"
+                            RemoteOs.WINDOWS -> "自宅の PC"
+                            RemoteOs.LINUX -> "Ubuntu サーバー"
+                        },
+                    )
                     HorizontalDivider(color = AppColors.Outline)
                     Field("ホスト（Tailscale 名 / 100.x.x.x）", host, { host = it.trim() }, placeholder = "my-pc.tailnet.ts.net", keyboardType = KeyboardType.Uri)
                 }
 
                 FieldGroup("ログイン") {
                     Field(
-                        when (protocol) {
-                            Protocol.VNC -> "Mac のユーザ名（空欄なら VNC パスワード）"
-                            Protocol.RDP -> "Windows のユーザ名（DOMAIN\\user も可）"
+                        when (os) {
+                            RemoteOs.MAC -> "Mac のユーザ名（空欄なら VNC パスワード）"
+                            RemoteOs.WINDOWS -> "Windows のユーザ名（DOMAIN\\user も可）"
+                            RemoteOs.LINUX ->
+                                if (protocol == Protocol.RDP) "Linux のユーザ名" else "Linux のユーザ名（SSH 用。VNC はパスワードのみ）"
                         },
                         username, { username = it },
                     )
@@ -216,9 +268,13 @@ fun ProfileEditScreen(
                 }
 
                 Text(
-                    "ⓘ " + when (protocol) {
-                        Protocol.VNC -> "Mac の「システム設定 → 一般 → 共有 → 画面共有」をオンにしてください。強制再起動・ファイル転送・Full HD 切替には「リモートログイン」も必要です。"
-                        Protocol.RDP -> "Windows（Pro 以上）の「設定 → システム → リモート デスクトップ」をオンにしてください。強制再起動・ファイル転送には「OpenSSH サーバー」が必要です。"
+                    "ⓘ " + when {
+                        os == RemoteOs.LINUX && protocol == Protocol.RDP ->
+                            "Ubuntu（GNOME）は「設定 → システム → リモートデスクトップ」をオンにします。その他のデスクトップは xrdp をインストールしてください。ターミナル・ファイル転送・強制再起動には openssh-server が必要です。"
+                        os == RemoteOs.LINUX ->
+                            "x11vnc や TigerVNC などの VNC サーバーを VNC パスワード付きで起動してください。ターミナル・ファイル転送・強制再起動には openssh-server が必要です。"
+                        os == RemoteOs.MAC -> "Mac の「システム設定 → 一般 → 共有 → 画面共有」をオンにしてください。強制再起動・ファイル転送・Full HD 切替には「リモートログイン」も必要です。"
+                        else -> "Windows（Pro 以上）の「設定 → システム → リモート デスクトップ」をオンにしてください。強制再起動・ファイル転送には「OpenSSH サーバー」が必要です。"
                     },
                     color = AppColors.Subtle,
                     fontSize = 12.sp,
@@ -257,7 +313,7 @@ fun ProfileEditScreen(
 }
 
 @Composable
-private fun OsOption(option: Protocol, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+private fun OsOption(option: RemoteOs, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val shape = RoundedCornerShape(16.dp)
     Column(
         modifier
@@ -268,12 +324,25 @@ private fun OsOption(option: Protocol, selected: Boolean, modifier: Modifier = M
             .padding(vertical = 14.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(if (option == Protocol.VNC) "🖥" else "⊞", fontSize = 24.sp, color = AppColors.Text)
-        Text(if (option == Protocol.VNC) "Mac" else "Windows", color = AppColors.Text, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
         Text(
-            if (option == Protocol.VNC) "画面共有 · 5900" else "リモートデスクトップ · 3389",
+            when (option) {
+                RemoteOs.MAC -> "🖥"
+                RemoteOs.WINDOWS -> "⊞"
+                RemoteOs.LINUX -> "🐧"
+            },
+            fontSize = 24.sp,
+            color = AppColors.Text,
+        )
+        Text(option.label, color = AppColors.Text, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+        Text(
+            when (option) {
+                RemoteOs.MAC -> "画面共有"
+                RemoteOs.WINDOWS -> "リモートデスクトップ"
+                RemoteOs.LINUX -> "RDP / VNC"
+            },
             color = AppColors.Subtle,
             fontSize = 11.sp,
+            maxLines = 1,
         )
     }
 }

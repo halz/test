@@ -40,7 +40,8 @@ import com.jcraft.jsch.ChannelSftp
 import com.jcraft.jsch.JSch
 import com.jcraft.jsch.Session
 import io.github.halz.macremote.data.ProfileRepository
-import io.github.halz.macremote.data.Protocol
+import io.github.halz.macremote.data.RemoteOs
+import io.github.halz.macremote.data.platform
 import io.github.halz.macremote.data.SecretStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -107,9 +108,11 @@ fun FileTransferScreen(
         var sshHint = "Mac の「システム設定 → 一般 → 共有 → リモートログイン」がオンか確認してください"
         try {
             val profile = repository.find(profileId) ?: error("接続先が見つかりません")
-            if (profile.protocol == Protocol.RDP) {
-                sshHint = "Windows の「設定 → システム → オプション機能」で OpenSSH サーバーを追加し、" +
+            when (profile.platform) {
+                RemoteOs.WINDOWS -> sshHint = "Windows の「設定 → システム → オプション機能」で OpenSSH サーバーを追加し、" +
                     "サービス sshd を開始しているか確認してください"
+                RemoteOs.LINUX -> sshHint = "Linux で openssh-server をインストールし、sshd が起動しているか確認してください"
+                RemoteOs.MAC -> Unit
             }
             if (profile.username.isEmpty()) {
                 error(

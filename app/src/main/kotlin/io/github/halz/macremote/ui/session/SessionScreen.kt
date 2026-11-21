@@ -65,7 +65,8 @@ import io.github.halz.macremote.data.GestureTrigger
 import io.github.halz.macremote.data.MacDisplay
 import io.github.halz.macremote.data.Profile
 import io.github.halz.macremote.data.ProfileRepository
-import io.github.halz.macremote.data.Protocol
+import io.github.halz.macremote.data.RemoteOs
+import io.github.halz.macremote.data.platform
 import io.github.halz.macremote.data.SecretStore
 import io.github.halz.macremote.rfb.keysym.Keysyms
 import io.github.halz.macremote.rfb.messages.PointerButtons
@@ -150,7 +151,7 @@ fun SessionScreen(
         done: String,
         action: suspend (Profile, String) -> Unit,
     ): (() -> Unit)? {
-        if (profile.protocol != Protocol.VNC || profile.username.isEmpty()) return null
+        if (profile.platform != RemoteOs.MAC || profile.username.isEmpty()) return null
         return {
             scope.launch {
                 runCatching { action(profile, secretStore.loadPassword(profile.id).orEmpty()) }
@@ -325,7 +326,9 @@ private fun ConnectedContent(
     // the modifier until it is tapped again.
     var modifiers by remember { mutableStateOf(setOf<Int>()) }
     var lockedModifiers by remember { mutableStateOf(setOf<Int>()) }
-    val windows = session.profile.protocol == Protocol.RDP
+    val os = session.profile.platform
+    // Windows and Linux keyboards: Ctrl/Alt/Super instead of the Mac's ⌘/⌥/⌃.
+    val pcKeys = os != RemoteOs.MAC
 
     LaunchedEffect(chromeVisible, chromeTouch, moreMenuOpen) {
         if (chromeVisible && !moreMenuOpen) {
@@ -458,7 +461,7 @@ private fun ConnectedContent(
     val onGesture: (GestureTrigger, Offset) -> Unit = remember(session, transform, pointerTarget) {
         { trigger: GestureTrigger, viewPosition: Offset ->
             val action = gesturesState.value[trigger] ?: trigger.default
-            val shortcut = shortcutFor(action, windows = session.profile.protocol == Protocol.RDP)
+            val shortcut = shortcutFor(action, session.profile.platform)
             if (shortcut != null) {
                 session.keyPress(shortcut.first, shortcut.second)
             } else when (action) {
@@ -549,7 +552,7 @@ private fun ConnectedContent(
                     chromeTouch++
                     scope.launch { settings.setTrackpadMode(!trackpad) }
                 }
-                ToolbarButton(if (windows) "Ctrl" else "⌘", "キー", selected = keyBarOpen) {
+                ToolbarButton(if (pcKeys) "Ctrl" else "⌘", "キー", selected = keyBarOpen) {
                     chromeTouch++
                     keyBarOpen = !keyBarOpen
                 }
@@ -646,8 +649,9 @@ private fun ConnectedContent(
                 KeyButton(if (keyboardActive) "⌨ ▼" else "⌨", selected = keyboardActive) {
                     keyboardActive = !keyboardActive
                 }
-                val modifierKeys = if (windows) {
-                    listOf("Ctrl" to Keysyms.CONTROL_L, "Alt" to Keysyms.ALT_L, "⊞" to Keysyms.SUPER_L, "⇧" to Keysyms.SHIFT_L)
+                val modifierKeys = if (pcKeys) {
+                    val superLabel = if (os == RemoteOs.WINDOWS) "⊞" else "Super"
+                    listOf("Ctrl" to Keysyms.CONTROL_L, "Alt" to Keysyms.ALT_L, superLabel to Keysyms.SUPER_L, "⇧" to Keysyms.SHIFT_L)
                 } else {
                     listOf("⌘" to Keysyms.SUPER_L, "⌥" to Keysyms.ALT_L, "⌃" to Keysyms.CONTROL_L, "⇧" to Keysyms.SHIFT_L)
                 }
@@ -757,12 +761,25 @@ private fun ErrorPane(message: String, onRetry: (() -> Unit)?, onExit: () -> Uni
  * are not shortcuts. Windows gets the closest native equivalent of each
  * macOS action (Task View for Mission Control, Ctrl in place of Command).
  */
-private fun shortcutFor(action: GestureAction, windows: Boolean): Pair<Int, List<Int>>? {
+private fun shortcutFor(action: GestureAction, os: RemoteOs): Pair<Int, List<Int>>? {
     val command = Keysyms.SUPER_L // Command on the Mac, the Windows key on Windows
     val ctrl = Keysyms.CONTROL_L
     val alt = Keysyms.ALT_L
     val shift = Keysyms.SHIFT_L
-    return if (windows) {
+    if (os == RemoteOs.LINUX) {
+        // GNOME-style defaults; the rest falls through to the Windows table,
+        // whose Ctrl/Alt shortcuts Linux desktops share.
+        when (action) {
+            GestureAction.MISSION_CONTROL -> return command to emptyList() // Activities overview
+            GestureAction.APP_EXPOSE -> return 'a'.code to listOf(command) // app grid
+            GestureAction.SPACE_LEFT -> return Keysyms.PAGE_UP to listOf(command)
+            GestureAction.SPACE_RIGHT -> return Keysyms.PAGE_DOWN to listOf(command)
+            GestureAction.SPOTLIGHT -> return command to emptyList()
+            GestureAction.MINIMIZE -> return 'h'.code to listOf(command)
+            else -> Unit
+        }
+    }
+    return if (os != RemoteOs.MAC) {
         when (action) {
             GestureAction.MISSION_CONTROL -> Keysyms.TAB to listOf(command)
             GestureAction.APP_EXPOSE -> Keysyms.TAB to listOf(ctrl, alt)

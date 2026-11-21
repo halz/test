@@ -6,8 +6,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.PointerEvent
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import io.github.halz.macremote.data.GestureTrigger
 import io.github.halz.macremote.rfb.messages.PointerButtons
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.abs
 
 /**
@@ -26,7 +31,7 @@ import kotlin.math.abs
  *  - long-press (no move)    -> right click at the cursor
  *
  * Both modes:
- *  - two-finger vertical drag-> scroll wheel
+ *  - two-finger vertical drag-> scroll wheel, coasting on after a flick
  *  - two-finger pinch        -> zoom (centroid-anchored) + pan
  *  - two-finger tap and every three/four-finger swipe or tap -> the command
  *    bound to that [GestureTrigger] in settings, reported through [onGesture]
@@ -56,201 +61,244 @@ fun Modifier.vncGestures(
 ): Modifier = pointerInput(transform, target, onGesture) {
     var lastTapUptime = 0L
     var lastTapPosition = Offset.Zero
+    // Momentum after a two-finger flick; any new touch stops it.
+    var momentum: Job? = null
 
-    awaitEachGesture {
-        val down = awaitFirstDown()
-        val slop = viewConfiguration.touchSlop
-        val doubleTapWindow = viewConfiguration.doubleTapTimeoutMillis
-        val longPressTimeout = viewConfiguration.longPressTimeoutMillis
-        val trackpad = target.isTrackpad()
-        // A multi-finger swipe has to clear more than the tap slop, or a
-        // shaky three-finger tap would register as a swipe.
-        val swipeThreshold = 32 * density
+    coroutineScope {
+        awaitEachGesture {
+            val down = awaitFirstDown()
+            momentum?.cancel()
+            val slop = viewConfiguration.touchSlop
+            val doubleTapWindow = viewConfiguration.doubleTapTimeoutMillis
+            val longPressTimeout = viewConfiguration.longPressTimeoutMillis
+            val trackpad = target.isTrackpad()
+            // A multi-finger swipe has to clear more than the tap slop, or a
+            // shaky three-finger tap would register as a swipe.
+            val swipeThreshold = 32 * density
 
-        val isDoubleTapDrag = down.uptimeMillis - lastTapUptime <= doubleTapWindow &&
-            (down.position - lastTapPosition).getDistance() <= slop * 4
-        var mode: GestureMode = if (isDoubleTapDrag) GestureMode.LeftDrag else GestureMode.Pending
-        if (mode == GestureMode.LeftDrag) {
-            val server = if (trackpad) target.cursor() else target.resolveDirect(down.position)
-            target.send(0, server)
-            target.send(PointerButtons.LEFT, server)
-        }
-
-        var lastSinglePosition = down.position
-        var lastEventUptime = down.uptimeMillis
-        var twoFingerDecided = false
-        var twoFingerZoom = false
-        var lastCentroid = Offset.Zero
-        var lastSpan = 0f
-        // Where the two fingers started: scroll-vs-zoom is decided on travel
-        // since then, because a single frame of a normal-speed scroll moves
-        // only a few pixels — far below the tap slop.
-        var twoFingerStartCentroid = Offset.Zero
-        var twoFingerStartSpan = 0f
-        var scrollAccumulator = 0f
-        val scrollStepPx = 8 * density
-        // Multi-finger (3+) state. maxPointers is the peak count, since
-        // fingers rarely land on the glass at the same instant.
-        var maxPointers = 1
-        var multiStartCentroid = Offset.Zero
-        // Where the fingers were last seen, so a gesture bound to a click
-        // acts on the spot the user actually touched.
-        var gestureCentroid = down.position
-
-        while (true) {
-            val event: PointerEvent? = if (mode == GestureMode.Pending) {
-                val remaining = longPressTimeout - (lastEventUptime - down.uptimeMillis)
-                withTimeoutOrNull(remaining.coerceAtLeast(1)) { awaitPointerEvent() }
-            } else {
-                awaitPointerEvent()
-            }
-
-            if (event == null) {
-                // Long press with no movement: right click.
+            val isDoubleTapDrag = down.uptimeMillis - lastTapUptime <= doubleTapWindow &&
+                (down.position - lastTapPosition).getDistance() <= slop * 4
+            var mode: GestureMode = if (isDoubleTapDrag) GestureMode.LeftDrag else GestureMode.Pending
+            if (mode == GestureMode.LeftDrag) {
                 val server = if (trackpad) target.cursor() else target.resolveDirect(down.position)
                 target.send(0, server)
-                target.send(PointerButtons.RIGHT, server)
-                target.send(0, server)
-                mode = GestureMode.Consumed
-                continue
-            }
-            lastEventUptime = event.changes.maxOf { it.uptimeMillis }
-            val pressed = event.changes.filter { it.pressed }
-            maxPointers = maxOf(maxPointers, pressed.size)
-
-            if (pressed.isEmpty()) {
-                when (mode) {
-                    GestureMode.Pending -> {
-                        // Tap: click at the cursor (trackpad) or touch point (direct).
-                        val server = if (trackpad) target.cursor() else target.resolveDirect(down.position)
-                        target.send(0, server)
-                        target.send(PointerButtons.LEFT, server)
-                        target.send(0, server)
-                        lastTapUptime = lastEventUptime
-                        lastTapPosition = down.position
-                    }
-                    GestureMode.LeftDrag -> {
-                        val server = if (trackpad) target.cursor() else target.resolveDirect(lastSinglePosition)
-                        target.send(0, server)
-                        // Counts as a tap for double-tap chains (triple-click selects lines).
-                        lastTapUptime = lastEventUptime
-                        lastTapPosition = lastSinglePosition
-                    }
-                    GestureMode.TwoFinger -> {
-                        // Lifted without scrolling or zooming: a two-finger tap.
-                        if (!twoFingerDecided) onGesture(GestureTrigger.TWO_TAP, gestureCentroid)
-                    }
-                    GestureMode.Multi -> tapTrigger(maxPointers)?.let { onGesture(it, gestureCentroid) }
-                    else -> Unit
-                }
-                event.changes.forEach { it.consume() }
-                break
+                target.send(PointerButtons.LEFT, server)
             }
 
-            val centroid = Offset(
-                pressed.sumOf { it.position.x.toDouble() }.toFloat() / pressed.size,
-                pressed.sumOf { it.position.y.toDouble() }.toFloat() / pressed.size,
-            )
-            gestureCentroid = centroid
+            var lastSinglePosition = down.position
+            var lastEventUptime = down.uptimeMillis
+            var twoFingerDecided = false
+            var twoFingerZoom = false
+            var lastCentroid = Offset.Zero
+            var lastSpan = 0f
+            // Where the two fingers started: scroll-vs-zoom is decided on travel
+            // since then, because a single frame of a normal-speed scroll moves
+            // only a few pixels — far below the tap slop.
+            var twoFingerStartCentroid = Offset.Zero
+            var twoFingerStartSpan = 0f
+            var scrollAccumulator = 0f
+            val scrollStepPx = 8 * density
+            val scrollVelocity = VelocityTracker()
+            var scrolling = false
 
-            if (pressed.size >= 3 && mode != GestureMode.LeftDrag) {
-                if (mode != GestureMode.Multi) {
-                    // A third finger cancels any two-finger interpretation.
-                    mode = GestureMode.Multi
-                    multiStartCentroid = centroid
-                }
-                val travel = centroid - multiStartCentroid
-                if (travel.getDistance() > swipeThreshold) {
-                    swipeTrigger(maxPointers, travel)?.let { onGesture(it, multiStartCentroid) }
-                    mode = GestureMode.Consumed
-                }
-                event.changes.forEach { it.consume() }
-                continue
-            }
-
-            if (pressed.size >= 2 && mode != GestureMode.LeftDrag && mode != GestureMode.Multi) {
-                val span = (pressed[0].position - pressed[1].position).getDistance()
-                if (mode != GestureMode.TwoFinger) {
-                    mode = GestureMode.TwoFinger
-                    twoFingerDecided = false
-                    lastCentroid = centroid
-                    lastSpan = span
-                    twoFingerStartCentroid = centroid
-                    twoFingerStartSpan = span
-                    scrollAccumulator = 0f
-                } else {
-                    if (!twoFingerDecided) {
-                        val spread = abs(span - twoFingerStartSpan)
-                        val travel = (centroid - twoFingerStartCentroid).getDistance()
-                        // Whichever passes the slop first wins; spreading the
-                        // fingers also moves the centroid a little, so compare
-                        // the two once either is past the threshold.
-                        if (spread > slop || travel > slop) {
-                            twoFingerDecided = true
-                            twoFingerZoom = spread > travel
+            // Keeps scrolling after the fingers lift, slowing down like a
+            // trackpad's inertial scroll.
+            fun coast(server: Offset) {
+                var velocity = scrollVelocity.calculateVelocity().y // px/s, + = fingers moving down
+                if (abs(velocity) < MOMENTUM_MIN_VELOCITY_DP * density) return
+                momentum = launch {
+                    var travel = 0f
+                    while (abs(velocity) >= MOMENTUM_STOP_VELOCITY_DP * density) {
+                        delay(MOMENTUM_FRAME_MILLIS)
+                        travel += velocity * MOMENTUM_FRAME_MILLIS / 1000f
+                        velocity *= MOMENTUM_DECAY
+                        while (abs(travel) >= scrollStepPx) {
+                            val button = if (travel > 0) PointerButtons.WHEEL_UP else PointerButtons.WHEEL_DOWN
+                            target.send(button, server)
+                            target.send(0, server)
+                            travel -= if (travel > 0) scrollStepPx else -scrollStepPx
                         }
                     }
-                    if (twoFingerDecided) {
-                        if (twoFingerZoom) {
-                            if (lastSpan > 0f && span > 0f) transform.zoomBy(span / lastSpan, centroid)
-                            transform.panBy(centroid - lastCentroid)
-                        } else {
-                            scrollAccumulator += centroid.y - lastCentroid.y
-                            val server = if (trackpad) target.cursor() else target.resolveDirect(centroid)
-                            while (abs(scrollAccumulator) >= scrollStepPx) {
-                                // Fingers moving down reveal earlier content = wheel up.
-                                val button = if (scrollAccumulator > 0) PointerButtons.WHEEL_UP else PointerButtons.WHEEL_DOWN
-                                target.send(button, server)
-                                target.send(0, server)
-                                scrollAccumulator -= if (scrollAccumulator > 0) scrollStepPx else -scrollStepPx
+                }
+            }
+            // Multi-finger (3+) state. maxPointers is the peak count, since
+            // fingers rarely land on the glass at the same instant.
+            var maxPointers = 1
+            var multiStartCentroid = Offset.Zero
+            // Where the fingers were last seen, so a gesture bound to a click
+            // acts on the spot the user actually touched.
+            var gestureCentroid = down.position
+
+            while (true) {
+                val event: PointerEvent? = if (mode == GestureMode.Pending) {
+                    val remaining = longPressTimeout - (lastEventUptime - down.uptimeMillis)
+                    withTimeoutOrNull(remaining.coerceAtLeast(1)) { awaitPointerEvent() }
+                } else {
+                    awaitPointerEvent()
+                }
+
+                if (event == null) {
+                    // Long press with no movement: right click.
+                    val server = if (trackpad) target.cursor() else target.resolveDirect(down.position)
+                    target.send(0, server)
+                    target.send(PointerButtons.RIGHT, server)
+                    target.send(0, server)
+                    mode = GestureMode.Consumed
+                    continue
+                }
+                lastEventUptime = event.changes.maxOf { it.uptimeMillis }
+                val pressed = event.changes.filter { it.pressed }
+                maxPointers = maxOf(maxPointers, pressed.size)
+
+                if (pressed.isEmpty()) {
+                    when (mode) {
+                        GestureMode.Pending -> {
+                            // Tap: click at the cursor (trackpad) or touch point (direct).
+                            val server = if (trackpad) target.cursor() else target.resolveDirect(down.position)
+                            target.send(0, server)
+                            target.send(PointerButtons.LEFT, server)
+                            target.send(0, server)
+                            lastTapUptime = lastEventUptime
+                            lastTapPosition = down.position
+                        }
+                        GestureMode.LeftDrag -> {
+                            val server = if (trackpad) target.cursor() else target.resolveDirect(lastSinglePosition)
+                            target.send(0, server)
+                            // Counts as a tap for double-tap chains (triple-click selects lines).
+                            lastTapUptime = lastEventUptime
+                            lastTapPosition = lastSinglePosition
+                        }
+                        GestureMode.TwoFinger -> {
+                            // Lifted without scrolling or zooming: a two-finger tap.
+                            if (!twoFingerDecided) onGesture(GestureTrigger.TWO_TAP, gestureCentroid)
+                            if (scrolling) coast(if (trackpad) target.cursor() else target.resolveDirect(gestureCentroid))
+                        }
+                        GestureMode.Multi -> tapTrigger(maxPointers)?.let { onGesture(it, gestureCentroid) }
+                        else -> Unit
+                    }
+                    event.changes.forEach { it.consume() }
+                    break
+                }
+
+                val centroid = Offset(
+                    pressed.sumOf { it.position.x.toDouble() }.toFloat() / pressed.size,
+                    pressed.sumOf { it.position.y.toDouble() }.toFloat() / pressed.size,
+                )
+                gestureCentroid = centroid
+
+                if (pressed.size >= 3 && mode != GestureMode.LeftDrag) {
+                    if (mode != GestureMode.Multi) {
+                        // A third finger cancels any two-finger interpretation.
+                        mode = GestureMode.Multi
+                        multiStartCentroid = centroid
+                    }
+                    val travel = centroid - multiStartCentroid
+                    if (travel.getDistance() > swipeThreshold) {
+                        swipeTrigger(maxPointers, travel)?.let { onGesture(it, multiStartCentroid) }
+                        mode = GestureMode.Consumed
+                    }
+                    event.changes.forEach { it.consume() }
+                    continue
+                }
+
+                if (pressed.size >= 2 && mode != GestureMode.LeftDrag && mode != GestureMode.Multi) {
+                    val span = (pressed[0].position - pressed[1].position).getDistance()
+                    if (mode != GestureMode.TwoFinger) {
+                        mode = GestureMode.TwoFinger
+                        twoFingerDecided = false
+                        lastCentroid = centroid
+                        lastSpan = span
+                        twoFingerStartCentroid = centroid
+                        twoFingerStartSpan = span
+                        scrollAccumulator = 0f
+                    } else {
+                        if (!twoFingerDecided) {
+                            val spread = abs(span - twoFingerStartSpan)
+                            val travel = (centroid - twoFingerStartCentroid).getDistance()
+                            // Whichever passes the slop first wins; spreading the
+                            // fingers also moves the centroid a little, so compare
+                            // the two once either is past the threshold.
+                            // Scrolling is the common case and starts at half the
+                            // slop; a zoom needs the spread to clearly dominate,
+                            // since fingers drift apart a little while scrolling.
+                            if (travel > slop / 2 && travel >= spread) {
+                                twoFingerDecided = true
+                                twoFingerZoom = false
+                            } else if (spread > slop && spread > travel * 1.5f) {
+                                twoFingerDecided = true
+                                twoFingerZoom = true
                             }
                         }
+                        if (twoFingerDecided) {
+                            if (twoFingerZoom) {
+                                if (lastSpan > 0f && span > 0f) transform.zoomBy(span / lastSpan, centroid)
+                                transform.panBy(centroid - lastCentroid)
+                            } else {
+                                if (!scrolling) {
+                                    // Count the travel that decided the gesture, so the
+                                    // first wheel step comes without extra movement.
+                                    scrolling = true
+                                    scrollAccumulator += lastCentroid.y - twoFingerStartCentroid.y
+                                }
+                                scrollAccumulator += centroid.y - lastCentroid.y
+                                scrollVelocity.addPosition(lastEventUptime, Offset(0f, centroid.y))
+                                val server = if (trackpad) target.cursor() else target.resolveDirect(centroid)
+                                while (abs(scrollAccumulator) >= scrollStepPx) {
+                                    // Fingers moving down reveal earlier content = wheel up.
+                                    val button = if (scrollAccumulator > 0) PointerButtons.WHEEL_UP else PointerButtons.WHEEL_DOWN
+                                    target.send(button, server)
+                                    target.send(0, server)
+                                    scrollAccumulator -= if (scrollAccumulator > 0) scrollStepPx else -scrollStepPx
+                                }
+                            }
+                        }
+                        lastCentroid = centroid
+                        lastSpan = span
                     }
-                    lastCentroid = centroid
-                    lastSpan = span
+                    event.changes.forEach { it.consume() }
+                    continue
                 }
-                event.changes.forEach { it.consume() }
-                continue
-            }
 
-            // Back to (or still) a single pointer.
-            val change = pressed[0]
-            when (mode) {
-                GestureMode.Pending -> {
-                    if ((change.position - down.position).getDistance() > slop) {
-                        mode = GestureMode.Pan
+                // Back to (or still) a single pointer.
+                val change = pressed[0]
+                when (mode) {
+                    GestureMode.Pending -> {
+                        if ((change.position - down.position).getDistance() > slop) {
+                            mode = GestureMode.Pan
+                            lastSinglePosition = change.position
+                        }
+                    }
+                    GestureMode.Pan -> {
+                        val delta = change.position - lastSinglePosition
+                        if (trackpad) {
+                            // Hover-move the virtual cursor.
+                            target.send(0, target.moveCursorBy(delta))
+                        } else {
+                            transform.panBy(delta)
+                        }
                         lastSinglePosition = change.position
                     }
-                }
-                GestureMode.Pan -> {
-                    val delta = change.position - lastSinglePosition
-                    if (trackpad) {
-                        // Hover-move the virtual cursor.
-                        target.send(0, target.moveCursorBy(delta))
-                    } else {
-                        transform.panBy(delta)
+                    GestureMode.LeftDrag -> {
+                        val delta = change.position - lastSinglePosition
+                        lastSinglePosition = change.position
+                        val server = if (trackpad) target.moveCursorBy(delta) else target.resolveDirect(change.position)
+                        target.send(PointerButtons.LEFT, server)
                     }
-                    lastSinglePosition = change.position
+                    // Fingers rarely leave the glass together, so a tap is decided
+                    // as soon as the count drops — not only when it reaches zero.
+                    GestureMode.TwoFinger -> {
+                        if (!twoFingerDecided) onGesture(GestureTrigger.TWO_TAP, gestureCentroid)
+                        if (scrolling) coast(if (trackpad) target.cursor() else target.resolveDirect(gestureCentroid))
+                        mode = GestureMode.Consumed
+                    }
+                    GestureMode.Multi -> {
+                        tapTrigger(maxPointers)?.let { onGesture(it, gestureCentroid) }
+                        mode = GestureMode.Consumed
+                    }
+                    GestureMode.Consumed -> Unit
                 }
-                GestureMode.LeftDrag -> {
-                    val delta = change.position - lastSinglePosition
-                    lastSinglePosition = change.position
-                    val server = if (trackpad) target.moveCursorBy(delta) else target.resolveDirect(change.position)
-                    target.send(PointerButtons.LEFT, server)
-                }
-                // Fingers rarely leave the glass together, so a tap is decided
-                // as soon as the count drops — not only when it reaches zero.
-                GestureMode.TwoFinger -> {
-                    if (!twoFingerDecided) onGesture(GestureTrigger.TWO_TAP, gestureCentroid)
-                    mode = GestureMode.Consumed
-                }
-                GestureMode.Multi -> {
-                    tapTrigger(maxPointers)?.let { onGesture(it, gestureCentroid) }
-                    mode = GestureMode.Consumed
-                }
-                GestureMode.Consumed -> Unit
+                event.changes.forEach { it.consume() }
             }
-            event.changes.forEach { it.consume() }
         }
     }
 }
@@ -281,5 +329,10 @@ private fun swipeTrigger(fingers: Int, travel: Offset): GestureTrigger? {
         null
     }
 }
+
+private const val MOMENTUM_MIN_VELOCITY_DP = 400f
+private const val MOMENTUM_STOP_VELOCITY_DP = 60f
+private const val MOMENTUM_FRAME_MILLIS = 16L
+private const val MOMENTUM_DECAY = 0.95f
 
 private enum class GestureMode { Pending, Pan, LeftDrag, TwoFinger, Multi, Consumed }

@@ -75,7 +75,9 @@ import io.github.halz.macremote.data.Profile
 import io.github.halz.macremote.data.ProfileRepository
 import io.github.halz.macremote.data.ProfileTransfer
 import io.github.halz.macremote.data.Protocol
+import io.github.halz.macremote.data.RemoteOs
 import io.github.halz.macremote.data.RemoteReboot
+import io.github.halz.macremote.data.platform
 import io.github.halz.macremote.data.SecretStore
 import io.github.halz.macremote.session.RemoteSession
 import io.github.halz.macremote.session.SessionHolder
@@ -111,7 +113,7 @@ fun ProfileListScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var query by rememberSaveable { mutableStateOf("") }
-    var filter by rememberSaveable { mutableStateOf<Protocol?>(null) }
+    var filter by rememberSaveable { mutableStateOf<RemoteOs?>(null) }
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
     var sheetTarget by remember { mutableStateOf<Profile?>(null) }
     var rebootTarget by remember { mutableStateOf<Profile?>(null) }
@@ -120,7 +122,7 @@ fun ProfileListScreen(
     fun sessionOf(profile: Profile): RemoteSession? = sessions.find { it.profile.id == profile.id }
 
     val visible = profiles.filter { profile ->
-        (filter == null || profile.protocol == filter) &&
+        (filter == null || profile.platform == filter) &&
             (query.isBlank() || listOf(profile.name, profile.host).any { it.contains(query.trim(), ignoreCase = true) })
     }
 
@@ -235,12 +237,12 @@ fun ProfileListScreen(
                 ) {
                     header()
                     LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(bottom = 24.dp)) {
-                        Protocol.entries.forEach { protocol ->
-                            val group = visible.filter { it.protocol == protocol }
+                        RemoteOs.entries.forEach { os ->
+                            val group = visible.filter { it.platform == os }
                             if (group.isEmpty()) return@forEach
-                            item(key = "header-$protocol") {
+                            item(key = "header-$os") {
                                 Text(
-                                    if (protocol == Protocol.VNC) "MAC" else "WINDOWS",
+                                    os.label.uppercase(),
                                     color = AppColors.Subtle,
                                     style = MaterialTheme.typography.labelSmall,
                                     modifier = Modifier.padding(start = 24.dp, top = 14.dp, bottom = 6.dp),
@@ -381,7 +383,7 @@ private fun SearchBox(query: String, onChange: (String) -> Unit, modifier: Modif
 }
 
 @Composable
-private fun FilterTabs(filter: Protocol?, onChange: (Protocol?) -> Unit, modifier: Modifier = Modifier) {
+private fun FilterTabs(filter: RemoteOs?, onChange: (RemoteOs?) -> Unit, modifier: Modifier = Modifier) {
     Row(
         modifier
             .fillMaxWidth()
@@ -390,7 +392,7 @@ private fun FilterTabs(filter: Protocol?, onChange: (Protocol?) -> Unit, modifie
             .border(1.dp, AppColors.Outline, RoundedCornerShape(12.dp))
             .padding(3.dp),
     ) {
-        listOf(null to "すべて", Protocol.VNC to "Mac", Protocol.RDP to "Windows").forEach { (value, label) ->
+        (listOf<Pair<RemoteOs?, String>>(null to "すべて") + RemoteOs.entries.map { it to it.label }).forEach { (value, label) ->
             val on = filter == value
             Box(
                 Modifier
@@ -431,7 +433,7 @@ private fun ProfileCard(
     ) {
         Box(Modifier.fillMaxWidth().aspectRatio(16f / 10f)) {
             ProfileThumbnail(profile, session, thumbnailVersion, Modifier.fillMaxSize())
-            Badge(if (profile.protocol == Protocol.VNC) "Mac" else "⊞ Windows", Modifier.align(Alignment.TopStart).padding(8.dp))
+            Badge(osBadge(profile), Modifier.align(Alignment.TopStart).padding(8.dp))
             if (session.isConnected()) {
                 Badge("● 接続中", Modifier.align(Alignment.TopEnd).padding(8.dp), background = AppColors.Online, color = Color(0xFF053D1E))
             }
@@ -537,7 +539,14 @@ private fun DetailPane(
             PrimaryButton(if (session.isConnected()) "● 画面に戻る" else "接続", Modifier.width(200.dp)) { actions.connect(profile) }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            InfoChip("種類", if (profile.protocol == Protocol.VNC) "Mac（画面共有）" else "Windows（RDP）")
+            InfoChip(
+                "種類",
+                when (profile.platform) {
+                    RemoteOs.MAC -> "Mac（画面共有）"
+                    RemoteOs.WINDOWS -> "Windows（RDP）"
+                    RemoteOs.LINUX -> "Linux（${if (profile.protocol == Protocol.RDP) "RDP" else "VNC"}）"
+                },
+            )
             InfoChip("状態", if (session.isConnected()) "接続中" else lastUsed?.let { relativeTime(it) + "に使用" } ?: "未使用")
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -562,8 +571,11 @@ private fun ProfileThumbnail(profile: Profile, session: RemoteSession?, thumbnai
         value = withContext(Dispatchers.IO) { Thumbnails.load(context, profile.id)?.asImageBitmap() }
     }
     val placeholder = Brush.linearGradient(
-        if (profile.protocol == Protocol.VNC) listOf(Color(0xFF3B2A6B), Color(0xFFB04A7A), Color(0xFFF0A35E))
-        else listOf(Color(0xFF0B3A75), Color(0xFF1767C9), Color(0xFF5FB3FF))
+        when (profile.platform) {
+            RemoteOs.MAC -> listOf(Color(0xFF3B2A6B), Color(0xFFB04A7A), Color(0xFFF0A35E))
+            RemoteOs.WINDOWS -> listOf(Color(0xFF0B3A75), Color(0xFF1767C9), Color(0xFF5FB3FF))
+            RemoteOs.LINUX -> listOf(Color(0xFF2C1A33), Color(0xFF77216F), Color(0xFFE95420))
+        }
     )
     val live = session.isConnected()
     if (live && session != null) {
@@ -579,7 +591,11 @@ private fun ProfileThumbnail(profile: Profile, session: RemoteSession?, thumbnai
                 Canvas(Modifier.fillMaxSize()) { drawCropped(image) }
             } else {
                 Text(
-                    if (profile.protocol == Protocol.VNC) "Mac" else "⊞",
+                    when (profile.platform) {
+                        RemoteOs.MAC -> "Mac"
+                        RemoteOs.WINDOWS -> "⊞"
+                        RemoteOs.LINUX -> "Linux"
+                    },
                     color = Color.White.copy(alpha = 0.85f),
                     fontWeight = FontWeight.Bold,
                     fontSize = 22.sp,
@@ -667,7 +683,7 @@ private fun EmptyState(modifier: Modifier = Modifier) {
         Text("接続先がありません", color = AppColors.Text, style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.height(6.dp))
         Text(
-            "＋ から Mac や Windows の Tailscale 名（例: my-pc.tailnet.ts.net）を登録してください",
+            "＋ から Mac・Windows・Linux の Tailscale 名（例: my-pc.tailnet.ts.net）を登録してください",
             color = AppColors.Subtle,
             style = MaterialTheme.typography.bodyMedium,
         )
@@ -682,10 +698,11 @@ private fun RebootDialog(target: Profile, onDismiss: () -> Unit, onConfirm: () -
         text = {
             Text(
                 "今すぐ再起動します。保存していない作業は失われます。\n\n" +
-                    when (target.protocol) {
-                        Protocol.VNC -> "Mac 側で「リモートログイン」が有効で、"
-                        Protocol.RDP -> "Windows 側で「OpenSSH サーバー」が有効で、"
-                    } + "このアカウントが管理者である必要があります。"
+                    when (target.platform) {
+                        RemoteOs.MAC -> "Mac 側で「リモートログイン」が有効で、"
+                        RemoteOs.WINDOWS -> "Windows 側で「OpenSSH サーバー」が有効で、"
+                        RemoteOs.LINUX -> "Linux 側で SSH（openssh-server）が有効で、"
+                    } + "このアカウントが管理者（Linux は sudo 可能）である必要があります。"
             )
         },
         confirmButton = { Button(onClick = onConfirm) { Text("再起動する") } },
@@ -695,13 +712,19 @@ private fun RebootDialog(target: Profile, onDismiss: () -> Unit, onConfirm: () -
 
 private fun Profile.displayName() = name.ifEmpty { host }
 
+private fun osBadge(profile: Profile) = when (profile.platform) {
+    RemoteOs.MAC -> "Mac"
+    RemoteOs.WINDOWS -> "⊞ Windows"
+    RemoteOs.LINUX -> "Linux"
+}
+
 /** Observed, so cards update when a connection comes up or drops. */
 @Composable
 private fun RemoteSession?.isConnected(): Boolean = this?.state?.collectAsState()?.value is SessionState.Connected
 
 private fun connectionLine(profile: Profile): String =
     listOfNotNull(
-        if (profile.protocol == Protocol.VNC) "Mac" else "Windows",
+        if (profile.platform == RemoteOs.LINUX) "Linux · ${if (profile.protocol == Protocol.RDP) "RDP" else "VNC"}" else profile.platform.label,
         "${profile.host}:${profile.port}",
         profile.username.ifEmpty { null },
     ).joinToString(" · ")

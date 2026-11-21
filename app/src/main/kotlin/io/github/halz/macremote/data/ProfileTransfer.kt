@@ -25,6 +25,7 @@ data class ProfileBackupEntry(
     val username: String,
     val password: String,
     val protocol: Protocol = Protocol.VNC,
+    val os: RemoteOs? = null,
 )
 
 object ProfileTransfer {
@@ -40,6 +41,7 @@ object ProfileTransfer {
                 username = profile.username,
                 password = secretStore.loadPassword(profile.id).orEmpty(),
                 protocol = profile.protocol,
+                os = profile.platform,
             )
         }
         return json.encodeToString(ProfileBackup(profiles = profiles))
@@ -59,6 +61,7 @@ object ProfileTransfer {
                     port = entry.port,
                     username = entry.username,
                     protocol = entry.protocol,
+                    os = entry.os,
                 )
             )
             secretStore.savePassword(id, entry.password)
